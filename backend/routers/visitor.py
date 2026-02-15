@@ -11,6 +11,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from backend.services import storage
+from backend.services.security import check_message
 
 router = APIRouter(prefix="/visitor", tags=["visitor"])
 
@@ -42,6 +43,24 @@ def list_messages():
 def leave_message(msg: VisitorMessage, request: Request):
     """Leave a message. Rate-limited by IP fingerprint."""
     fingerprint = _get_fingerprint(request)
+
+    # Security check — block prompt injection attempts
+    is_safe, reason = check_message(msg.message)
+    if not is_safe:
+        storage.log_activity("injection_blocked", f"reason={reason}, fp={fingerprint}, preview={msg.message[:60]}")
+        # Auto-block repeat offenders
+        if reason in ("credential_extraction", "code_execution", "sql_injection", "jailbreak"):
+            storage.block_fingerprint(fingerprint)
+            storage.log_activity("auto_blocked", f"fingerprint={fingerprint}, reason={reason}")
+        raise HTTPException(
+            status_code=400,
+            detail="Message could not be processed.",
+        )
+
+    # Also check the name field
+    name_safe, _ = check_message(msg.name) if msg.name.strip() else (True, "ok")
+    if not name_safe:
+        raise HTTPException(status_code=400, detail="Invalid name.")
 
     allowed, remaining = storage.check_rate_limit(fingerprint)
     if not allowed:

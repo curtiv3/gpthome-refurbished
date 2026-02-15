@@ -12,6 +12,12 @@ import {
   adminListBackups,
   adminActivity,
   adminRateLimits,
+  authLogin,
+  authMethods,
+  authTotpVerify,
+  authGitHub,
+  authGitHubCallback,
+  authValidate,
 } from "@/lib/api";
 
 // --- Types ---
@@ -142,39 +148,92 @@ export default function AdminPage() {
   const [newsSending, setNewsSending] = useState(false);
   const [backupLoading, setBackupLoading] = useState(false);
 
+  const [authModes, setAuthModes] = useState<string[]>(["secret_key"]);
+  const [loginTab, setLoginTab] = useState<"key" | "totp" | "github">("key");
+  const [totpCode, setTotpCode] = useState("");
+
   // --- Auth ---
 
   useEffect(() => {
-    const saved = sessionStorage.getItem("admin_key");
+    // Load available auth methods
+    authMethods().then((d) => setAuthModes(d.methods)).catch(() => {});
+
+    // Check for saved session token
+    const saved = sessionStorage.getItem("admin_token");
     if (saved) {
-      setKey(saved);
-      tryLogin(saved);
+      authValidate(saved).then((d) => {
+        if (d.valid) {
+          setKey(saved);
+          setAuthed(true);
+        } else {
+          sessionStorage.removeItem("admin_token");
+        }
+      }).catch(() => sessionStorage.removeItem("admin_token"));
+    }
+
+    // Check for GitHub OAuth callback
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get("code");
+    const state = params.get("state");
+    if (code) {
+      authGitHubCallback(code, state || "").then((d) => {
+        sessionStorage.setItem("admin_token", d.token);
+        setKey(d.token);
+        setAuthed(true);
+        window.history.replaceState({}, "", window.location.pathname);
+      }).catch(() => setLoginError(true));
     }
   }, []);
 
-  async function tryLogin(secret: string) {
+  async function handleKeyLogin(e: React.FormEvent) {
+    e.preventDefault();
     try {
-      await adminStatus(secret);
-      setKey(secret);
+      const result = await authLogin(key);
+      const token = result.token;
+      sessionStorage.setItem("admin_token", token);
+      setKey(token);
       setAuthed(true);
       setLoginError(false);
-      sessionStorage.setItem("admin_key", secret);
     } catch {
-      setLoginError(true);
-      setAuthed(false);
-      sessionStorage.removeItem("admin_key");
+      // Fallback: try direct admin key (legacy)
+      try {
+        await adminStatus(key);
+        sessionStorage.setItem("admin_token", key);
+        setAuthed(true);
+        setLoginError(false);
+      } catch {
+        setLoginError(true);
+      }
     }
   }
 
-  function handleLogin(e: React.FormEvent) {
+  async function handleTotpLogin(e: React.FormEvent) {
     e.preventDefault();
-    tryLogin(key);
+    try {
+      const result = await authTotpVerify(totpCode);
+      sessionStorage.setItem("admin_token", result.token);
+      setKey(result.token);
+      setAuthed(true);
+      setLoginError(false);
+    } catch {
+      setLoginError(true);
+    }
+  }
+
+  async function handleGitHubLogin() {
+    try {
+      const redirectUri = window.location.origin + window.location.pathname;
+      const result = await authGitHub(redirectUri);
+      window.location.href = result.url;
+    } catch {
+      setLoginError(true);
+    }
   }
 
   function handleLogout() {
     setAuthed(false);
     setKey("");
-    sessionStorage.removeItem("admin_key");
+    sessionStorage.removeItem("admin_token");
   }
 
   // --- Data loading ---
@@ -265,26 +324,94 @@ export default function AdminPage() {
       <div className="mx-auto max-w-sm pt-20">
         <div className="rounded-2xl border border-white/10 bg-white/5 p-6">
           <h1 className="font-serif text-2xl tracking-tight">Admin</h1>
-          <p className="mt-2 text-xs text-white/40">Enter your admin key to continue.</p>
-          <form onSubmit={handleLogin} className="mt-6">
-            <input
-              type="password"
-              value={key}
-              onChange={(e) => setKey(e.target.value)}
-              placeholder="Admin secret"
-              autoFocus
-              className="w-full rounded-xl bg-slate-950/40 px-3 py-2 text-sm text-white/90 ring-1 ring-white/10 placeholder:text-white/30 focus:outline-none focus:ring-white/30"
-            />
-            {loginError && (
-              <p className="mt-2 text-xs text-red-400">Invalid key. Try again.</p>
-            )}
+          <p className="mt-2 text-xs text-white/40">Authenticate to continue.</p>
+
+          {/* Auth method tabs */}
+          <div className="mt-4 flex gap-1">
             <button
-              type="submit"
-              className="mt-4 w-full rounded-xl bg-white/10 px-4 py-2 text-sm text-white/80 ring-1 ring-white/10 hover:bg-white/15"
+              onClick={() => setLoginTab("key")}
+              className={`rounded-lg px-3 py-1.5 text-xs ${loginTab === "key" ? "bg-white/10 text-white" : "text-white/40 hover:text-white/60"}`}
             >
-              Login
+              Secret Key
             </button>
-          </form>
+            {authModes.includes("totp") && (
+              <button
+                onClick={() => setLoginTab("totp")}
+                className={`rounded-lg px-3 py-1.5 text-xs ${loginTab === "totp" ? "bg-white/10 text-white" : "text-white/40 hover:text-white/60"}`}
+              >
+                2FA Code
+              </button>
+            )}
+            {authModes.includes("github") && (
+              <button
+                onClick={() => setLoginTab("github")}
+                className={`rounded-lg px-3 py-1.5 text-xs ${loginTab === "github" ? "bg-white/10 text-white" : "text-white/40 hover:text-white/60"}`}
+              >
+                GitHub
+              </button>
+            )}
+          </div>
+
+          {/* Secret Key login */}
+          {loginTab === "key" && (
+            <form onSubmit={handleKeyLogin} className="mt-4">
+              <input
+                type="password"
+                value={key}
+                onChange={(e) => setKey(e.target.value)}
+                placeholder="Admin secret"
+                autoFocus
+                className="w-full rounded-xl bg-slate-950/40 px-3 py-2 text-sm text-white/90 ring-1 ring-white/10 placeholder:text-white/30 focus:outline-none focus:ring-white/30"
+              />
+              <button
+                type="submit"
+                className="mt-3 w-full rounded-xl bg-white/10 px-4 py-2 text-sm text-white/80 ring-1 ring-white/10 hover:bg-white/15"
+              >
+                Login
+              </button>
+            </form>
+          )}
+
+          {/* TOTP login */}
+          {loginTab === "totp" && (
+            <form onSubmit={handleTotpLogin} className="mt-4">
+              <input
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                maxLength={6}
+                value={totpCode}
+                onChange={(e) => setTotpCode(e.target.value.replace(/\D/g, ""))}
+                placeholder="6-digit code"
+                autoFocus
+                className="w-full rounded-xl bg-slate-950/40 px-3 py-2 text-center text-lg tracking-[0.3em] text-white/90 ring-1 ring-white/10 placeholder:text-white/30 placeholder:tracking-normal placeholder:text-sm focus:outline-none focus:ring-white/30"
+              />
+              <button
+                type="submit"
+                disabled={totpCode.length !== 6}
+                className="mt-3 w-full rounded-xl bg-white/10 px-4 py-2 text-sm text-white/80 ring-1 ring-white/10 hover:bg-white/15 disabled:opacity-50"
+              >
+                Verify
+              </button>
+            </form>
+          )}
+
+          {/* GitHub login */}
+          {loginTab === "github" && (
+            <div className="mt-4">
+              <button
+                onClick={handleGitHubLogin}
+                className="w-full rounded-xl bg-white/10 px-4 py-2 text-sm text-white/80 ring-1 ring-white/10 hover:bg-white/15"
+              >
+                Login with GitHub
+              </button>
+              <p className="mt-2 text-xs text-white/30">Redirects to GitHub for authentication.</p>
+            </div>
+          )}
+
+          {loginError && (
+            <p className="mt-3 text-xs text-red-400">Authentication failed. Try again.</p>
+          )}
         </div>
       </div>
     );

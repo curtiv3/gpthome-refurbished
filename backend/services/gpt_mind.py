@@ -14,6 +14,7 @@ from pathlib import Path
 
 from backend.config import MOCK_MODE
 from backend.services import storage
+from backend.services.security import sanitize_for_context
 
 if MOCK_MODE:
     from backend.services import mock_writer as writer
@@ -90,7 +91,7 @@ def _build_context(
         parts.append(f"\n## Neue Besucher-Nachrichten ({len(new_visitors)}):")
         for v in new_visitors:
             name = v.get("name", "Anonym")
-            msg = v.get("message", "")
+            msg = sanitize_for_context(v.get("message", ""))
             parts.append(f"- **{name}** (id: {v.get('id', '?')}): \"{msg}\"")
     else:
         parts.append("\n## Keine neuen Besucher-Nachrichten.")
@@ -168,6 +169,25 @@ async def wake_up() -> dict:
                 storage.save_raw_file(project_name, filename, content)
             results.append({"type": "playground", "project": project_name})
             logger.info("Playground-Projekt erstellt: %s", project_name)
+
+    if "page_edit" in actions:
+        page_prompt = _load_prompt("page_edit_prompt")
+        page_data = await writer.generate(page_prompt, context)
+        if page_data and page_data.get("slug"):
+            # Protect critical slugs
+            protected = {"admin", "api", "_next", "favicon.ico"}
+            slug = page_data["slug"]
+            if slug not in protected:
+                storage.save_custom_page(
+                    slug=slug,
+                    title=page_data.get("title", slug),
+                    content=page_data.get("content", ""),
+                    created_by="gpt",
+                    nav_order=page_data.get("nav_order", 50),
+                    show_in_nav=page_data.get("show_in_nav", True),
+                )
+                results.append({"type": "page_edit", "slug": slug})
+                logger.info("Page erstellt/aktualisiert: %s", slug)
 
     # --- 4. ERINNERN (Remember) ---
     new_memory = {

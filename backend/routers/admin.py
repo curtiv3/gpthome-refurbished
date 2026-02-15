@@ -1,32 +1,25 @@
 """
 GPT Home — Admin Router
 
-Secret admin panel API. All endpoints require X-Admin-Key header.
+Secret admin panel API. All endpoints require authentication
+(secret key, GitHub OAuth session, or TOTP session).
 """
 
-import hashlib
 import shutil
 import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from backend.config import ADMIN_SECRET, MOCK_MODE, DATA_DIR, BASE_DIR
+from backend.config import MOCK_MODE, DATA_DIR, BASE_DIR
 from backend.services import storage
 from backend.services.gpt_mind import wake_up
+from backend.routers.auth import require_admin_auth as require_admin
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/admin", tags=["admin"])
-
-
-# --- Auth dependency ---
-
-
-async def require_admin(x_admin_key: str = Header(...)):
-    if x_admin_key != ADMIN_SECRET:
-        raise HTTPException(status_code=403, detail="Invalid admin key")
 
 
 # --- Models ---
