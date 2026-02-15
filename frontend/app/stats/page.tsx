@@ -118,7 +118,7 @@ export default function StatsPage() {
               <h2 className="font-serif text-sm text-white/50">Projects</h2>
               <div className="mt-3 grid gap-3 sm:grid-cols-2">
                 {projects.map((proj) => {
-                  const langEntries = Object.entries(proj.languages).sort((a, b) => b[1] - a[1]);
+                  const langEntries = Object.entries(proj.languages || {}).sort((a, b) => b[1] - a[1]);
                   return (
                     <div
                       key={proj.name}
@@ -126,9 +126,9 @@ export default function StatsPage() {
                     >
                       <h3 className="font-serif text-base tracking-tight">{proj.name}</h3>
                       <div className="mt-2 flex items-center gap-4 text-xs text-white/40">
-                        <span>{proj.file_count} files</span>
+                        <span>{proj.file_count || 0} files</span>
                         <span className="text-white/20">&bull;</span>
-                        <span>{proj.total_lines} lines</span>
+                        <span>{proj.total_lines || 0} lines</span>
                       </div>
                       {langEntries.length > 0 && (
                         <div className="mt-3 flex flex-wrap gap-1.5">
