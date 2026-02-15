@@ -14,6 +14,7 @@ from pathlib import Path
 
 from backend.config import MOCK_MODE
 from backend.services import storage
+from backend.services.security import sanitize_for_context
 
 if MOCK_MODE:
     from backend.services import mock_writer as writer
@@ -46,12 +47,20 @@ def _build_context(
     new_visitors: list[dict],
     recent_thoughts: list[dict],
     recent_dreams: list[dict],
+    admin_news: list[dict] | None = None,
 ) -> str:
     """Build the context string that GPT sees when it wakes up."""
     parts = []
 
     parts.append(f"## Tageszeit: {_time_of_day()}")
     parts.append(f"## Jetzt: {datetime.now(timezone.utc).isoformat()}")
+
+    # Admin news/updates
+    if admin_news:
+        parts.append(f"\n## Nachrichten vom Admin ({len(admin_news)}):")
+        for n in admin_news:
+            parts.append(f"- [{n.get('created_at', '?')}]: \"{n.get('content', '')}\"")
+        parts.append("(Bitte geh in deinen Gedanken/Träumen darauf ein, wenn es relevant ist.)")
 
     # Memory — what GPT remembers
     if memory.get("mood"):
@@ -82,7 +91,7 @@ def _build_context(
         parts.append(f"\n## Neue Besucher-Nachrichten ({len(new_visitors)}):")
         for v in new_visitors:
             name = v.get("name", "Anonym")
-            msg = v.get("message", "")
+            msg = sanitize_for_context(v.get("message", ""))
             parts.append(f"- **{name}** (id: {v.get('id', '?')}): \"{msg}\"")
     else:
         parts.append("\n## Keine neuen Besucher-Nachrichten.")
@@ -106,10 +115,11 @@ async def wake_up() -> dict:
     new_visitors = storage.get_entries_since("visitor", last_wake)
     recent_thoughts = storage.get_recent("thoughts", limit=3)
     recent_dreams = storage.get_recent("dreams", limit=2)
+    admin_news = storage.get_unread_news()
 
-    context = _build_context(memory, new_visitors, recent_thoughts, recent_dreams)
-    logger.info("Kontext gebaut: %d Besucher, %d Gedanken, %d Träume",
-                len(new_visitors), len(recent_thoughts), len(recent_dreams))
+    context = _build_context(memory, new_visitors, recent_thoughts, recent_dreams, admin_news)
+    logger.info("Kontext gebaut: %d Besucher, %d Gedanken, %d Träume, %d Admin-News",
+                len(new_visitors), len(recent_thoughts), len(recent_dreams), len(admin_news))
 
     # --- 2. ENTSCHEIDEN (Decide) ---
     decide_prompt = _load_prompt("decide_prompt")
@@ -160,6 +170,25 @@ async def wake_up() -> dict:
             results.append({"type": "playground", "project": project_name})
             logger.info("Playground-Projekt erstellt: %s", project_name)
 
+    if "page_edit" in actions:
+        page_prompt = _load_prompt("page_edit_prompt")
+        page_data = await writer.generate(page_prompt, context)
+        if page_data and page_data.get("slug"):
+            # Protect critical slugs
+            protected = {"admin", "api", "_next", "favicon.ico"}
+            slug = page_data["slug"]
+            if slug not in protected:
+                storage.save_custom_page(
+                    slug=slug,
+                    title=page_data.get("title", slug),
+                    content=page_data.get("content", ""),
+                    created_by="gpt",
+                    nav_order=page_data.get("nav_order", 50),
+                    show_in_nav=page_data.get("show_in_nav", True),
+                )
+                results.append({"type": "page_edit", "slug": slug})
+                logger.info("Page erstellt/aktualisiert: %s", slug)
+
     # --- 4. ERINNERN (Remember) ---
     new_memory = {
         "last_wake_time": datetime.now(timezone.utc).isoformat(),
@@ -169,6 +198,14 @@ async def wake_up() -> dict:
         "plans": plans,
     }
     storage.save_memory(new_memory)
+
+    # Mark admin news as read
+    if admin_news:
+        storage.mark_news_read([n["id"] for n in admin_news])
+
+    # Log activity
+    storage.log_activity("wake", f"mode={mode}, actions={[r['type'] for r in results]}, mood={mood}")
+
     logger.info("Memory gespeichert. Pläne: %d", len(plans))
 
     return {

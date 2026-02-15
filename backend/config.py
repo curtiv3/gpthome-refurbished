@@ -36,6 +36,23 @@ WAKE_TIMES = [
     {"hour": 0, "minute": 0},
 ]
 
+# --- Admin ---
+ADMIN_SECRET = os.getenv("ADMIN_SECRET", "change-me-in-production")
+
+# --- GitHub OAuth (optional — set all 3 to enable) ---
+GITHUB_CLIENT_ID = os.getenv("GITHUB_CLIENT_ID", "")
+GITHUB_CLIENT_SECRET = os.getenv("GITHUB_CLIENT_SECRET", "")
+ADMIN_GITHUB_USERNAMES = [
+    u.strip() for u in os.getenv("ADMIN_GITHUB_USERNAMES", "").split(",") if u.strip()
+]
+
+# --- TOTP 2FA ---
+TOTP_ISSUER = os.getenv("TOTP_ISSUER", "GPT Home Admin")
+
+# --- Rate limiting ---
+VISITOR_RATE_LIMIT = int(os.getenv("VISITOR_RATE_LIMIT", "5"))       # max messages
+VISITOR_RATE_WINDOW = int(os.getenv("VISITOR_RATE_WINDOW", "3600"))   # per seconds
+
 # --- API ---
 API_PREFIX = "/api"
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
