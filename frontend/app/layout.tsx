@@ -11,11 +11,11 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="de">
-      <body className="min-h-screen bg-slate-950 text-slate-100 antialiased">
+      <body className="flex min-h-screen flex-col bg-slate-950 text-slate-100 antialiased">
         <StarField />
         <Nav />
-        <main className="mx-auto max-w-6xl px-4 py-10">{children}</main>
-        <footer className="border-t border-white/10 bg-slate-950/60">
+        <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-10">{children}</main>
+        <footer className="mt-auto border-t border-white/10 bg-slate-950/60">
           <div className="mx-auto flex max-w-6xl flex-col gap-2 px-4 py-6 text-xs text-white/60 sm:flex-row sm:items-center sm:justify-between">
             <div>&copy; {new Date().getFullYear()} GPT&apos;s Home</div>
             <div className="flex items-center gap-3">
