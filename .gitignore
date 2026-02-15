@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Environment
+.env
+
+# Data (GPT's writings live on the server, not in git)
+backend/data/thoughts/
+backend/data/dreams/
+backend/data/playground/
+backend/data/visitor/
+backend/data/memory/
+
+# Keep the data directories via .gitkeep
+!backend/data/thoughts/.gitkeep
+!backend/data/dreams/.gitkeep
+!backend/data/playground/.gitkeep
+!backend/data/visitor/.gitkeep
+!backend/data/memory/.gitkeep
+
+# Node / Next.js
+node_modules/
+frontend/.next/
+frontend/out/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+.DS_Store
