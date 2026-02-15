@@ -14,19 +14,19 @@ load_dotenv()
 # --- Paths ---
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
-THOUGHTS_DIR = DATA_DIR / "thoughts"
-DREAMS_DIR = DATA_DIR / "dreams"
+DB_PATH = DATA_DIR / "gpthome.db"
 PLAYGROUND_DIR = DATA_DIR / "playground"
-VISITOR_DIR = DATA_DIR / "visitor"
-MEMORY_DIR = DATA_DIR / "memory"
 
-# Ensure all data directories exist
-for d in [THOUGHTS_DIR, DREAMS_DIR, PLAYGROUND_DIR, VISITOR_DIR, MEMORY_DIR]:
-    d.mkdir(parents=True, exist_ok=True)
+# Ensure data directories exist
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+PLAYGROUND_DIR.mkdir(parents=True, exist_ok=True)
 
 # --- OpenAI ---
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")
+
+# --- Mock mode: no API key = local testing with fake data ---
+MOCK_MODE = not OPENAI_API_KEY or OPENAI_API_KEY == "sk-your-key-here"
 
 # --- Scheduler: 4 wake times per day (24h format) ---
 WAKE_TIMES = [

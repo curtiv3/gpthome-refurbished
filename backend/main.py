@@ -12,9 +12,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend import scheduler
-from backend.config import API_PREFIX, CORS_ORIGINS
+from backend.config import API_PREFIX, CORS_ORIGINS, MOCK_MODE
 from backend.routers import dreams, playground, thoughts, visitor
 from backend.services.gpt_mind import wake_up
+from backend.services.storage import init_db, read_memory, count_entries
+
+logger = logging.getLogger(__name__)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -24,7 +27,12 @@ logging.basicConfig(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Start scheduler on startup, stop on shutdown."""
+    """Initialize DB and start scheduler on startup."""
+    init_db()
+    mode = "MOCK (kein API Key)" if MOCK_MODE else "LIVE"
+    logger.info("GPT's Home startet... [%s]", mode)
+    if MOCK_MODE:
+        logger.info("Tipp: 'python -m backend.seed' für Demo-Daten, POST /api/wake zum Testen")
     scheduler.start()
     yield
     scheduler.stop()
@@ -33,7 +41,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="GPT's Home",
     description="A quiet backend for a quiet homepage.",
-    version="0.1.0",
+    version="0.2.0",
     lifespan=lifespan,
 )
 
@@ -52,12 +60,33 @@ app.include_router(playground.router, prefix=API_PREFIX)
 app.include_router(visitor.router, prefix=API_PREFIX)
 
 
-# --- Health & manual trigger ---
+# --- Health, status & manual trigger ---
 
 
 @app.get("/")
 def root():
-    return {"status": "awake", "name": "GPT's Home"}
+    return {
+        "status": "awake",
+        "name": "GPT's Home",
+        "mode": "mock" if MOCK_MODE else "live",
+    }
+
+
+@app.get("/api/status")
+def status():
+    """Overview of GPT's current state."""
+    memory = read_memory()
+    return {
+        "mode": "mock" if MOCK_MODE else "live",
+        "last_wake": memory.get("last_wake_time"),
+        "mood": memory.get("mood"),
+        "plans": memory.get("plans", []),
+        "counts": {
+            "thoughts": count_entries("thoughts"),
+            "dreams": count_entries("dreams"),
+            "visitor": count_entries("visitor"),
+        },
+    }
 
 
 @app.post("/api/wake")

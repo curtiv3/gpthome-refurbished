@@ -3,6 +3,8 @@ GPT Home — GPT Mind (Das Herzstück)
 
 The wake cycle: Wahrnehmen → Entscheiden → Handeln → Erinnern
 GPT is not a writer. GPT is a resident.
+
+In mock mode (no API key), uses mock_writer for local testing.
 """
 
 import json
@@ -10,8 +12,13 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
+from backend.config import MOCK_MODE
 from backend.services import storage
-from backend.services import gpt_writer
+
+if MOCK_MODE:
+    from backend.services import mock_writer as writer
+else:
+    from backend.services import gpt_writer as writer
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +96,8 @@ async def wake_up() -> dict:
 
     Returns a summary of what GPT did.
     """
-    logger.info("GPT wacht auf...")
+    mode = "MOCK" if MOCK_MODE else "LIVE"
+    logger.info("GPT wacht auf... [%s mode]", mode)
 
     # --- 1. WAHRNEHMEN (Perceive) ---
     memory = storage.read_memory()
@@ -105,7 +113,7 @@ async def wake_up() -> dict:
 
     # --- 2. ENTSCHEIDEN (Decide) ---
     decide_prompt = _load_prompt("decide_prompt")
-    decision = await gpt_writer.decide(decide_prompt, context)
+    decision = await writer.decide(decide_prompt, context)
 
     actions = decision.get("actions", ["thought"])
     mood = decision.get("mood", "quiet")
@@ -118,7 +126,7 @@ async def wake_up() -> dict:
 
     if "thought" in actions:
         thought_prompt = _load_prompt("thought_prompt")
-        thought_data = await gpt_writer.generate(thought_prompt, context)
+        thought_data = await writer.generate(thought_prompt, context)
         if thought_data:
             thought_data["type"] = "thought"
             saved = storage.save_entry("thoughts", thought_data)
@@ -127,7 +135,7 @@ async def wake_up() -> dict:
 
     if "dream" in actions:
         dream_prompt = _load_prompt("dream_prompt")
-        dream_data = await gpt_writer.generate(dream_prompt, context)
+        dream_data = await writer.generate(dream_prompt, context)
         if dream_data:
             dream_data["type"] = "dream"
             saved = storage.save_entry("dreams", dream_data)
@@ -136,21 +144,19 @@ async def wake_up() -> dict:
 
     if "playground" in actions:
         playground_prompt = _load_prompt("playground_prompt")
-        playground_data = await gpt_writer.generate(playground_prompt, context)
+        playground_data = await writer.generate(playground_prompt, context)
         if playground_data and "files" in playground_data:
             project_name = playground_data.get("project_name", "experiment")
-            # Save meta.json
             meta = {
                 "project_name": project_name,
                 "title": playground_data.get("title", project_name),
                 "description": playground_data.get("description", ""),
                 "created_at": storage._now_iso(),
             }
-            storage.save_raw_file("playground", project_name, "meta.json",
+            storage.save_raw_file(project_name, "meta.json",
                                   json.dumps(meta, ensure_ascii=False, indent=2))
-            # Save each file
             for filename, content in playground_data["files"].items():
-                storage.save_raw_file("playground", project_name, filename, content)
+                storage.save_raw_file(project_name, filename, content)
             results.append({"type": "playground", "project": project_name})
             logger.info("Playground-Projekt erstellt: %s", project_name)
 
@@ -170,4 +176,5 @@ async def wake_up() -> dict:
         "actions": results,
         "mood": mood,
         "plans_count": len(plans),
+        "mode": mode,
     }
