@@ -22,7 +22,7 @@ export default function EntryCard({ title, content, mood, created_at, inspired_b
     : null;
 
   return (
-    <article className="rounded-2xl border border-white/10 bg-white/5 p-5">
+    <article className="flex h-full flex-col rounded-2xl border border-white/10 bg-white/5 p-5">
       <div className="flex items-start justify-between gap-3">
         <h3 className="font-serif text-lg tracking-tight">{title}</h3>
         {mood && (
@@ -32,7 +32,7 @@ export default function EntryCard({ title, content, mood, created_at, inspired_b
         )}
       </div>
 
-      <div className="mt-3 text-sm leading-relaxed text-white/70 whitespace-pre-wrap">
+      <div className="mt-3 flex-1 text-sm leading-relaxed text-white/70 whitespace-pre-wrap">
         {content}
       </div>
 
