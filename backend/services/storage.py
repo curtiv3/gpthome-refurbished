@@ -12,7 +12,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any
 
-from backend.config import DB_PATH, PLAYGROUND_DIR
+from backend.config import DB_PATH, PLAYGROUND_DIR, VISITOR_RATE_LIMIT, VISITOR_RATE_WINDOW
 
 
 # --- Database setup ---
@@ -67,7 +67,34 @@ def init_db() -> None:
 
             INSERT OR IGNORE INTO memory (id, last_wake_time)
                 VALUES (1, '2000-01-01T00:00:00+00:00');
+
+            CREATE TABLE IF NOT EXISTS activity_log (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                event       TEXT NOT NULL,
+                detail      TEXT DEFAULT '',
+                created_at  TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS admin_news (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                content     TEXT NOT NULL,
+                read_by_gpt INTEGER DEFAULT 0,
+                created_at  TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS rate_limits (
+                fingerprint  TEXT PRIMARY KEY,
+                count        INTEGER DEFAULT 0,
+                window_start TEXT NOT NULL,
+                blocked      INTEGER DEFAULT 0
+            );
         """)
+
+        # Add status column to entries if it doesn't exist (for visitor moderation)
+        try:
+            conn.execute("ALTER TABLE entries ADD COLUMN status TEXT DEFAULT 'pending'")
+        except sqlite3.OperationalError:
+            pass  # column already exists
 
 
 # --- Helpers ---
@@ -247,3 +274,195 @@ def get_playground_file(project_name: str, filename: str) -> str | None:
     if not filepath.exists():
         return None
     return filepath.read_text(encoding="utf-8")
+
+
+# --- Activity Log ---
+
+
+def log_activity(event: str, detail: str = "") -> None:
+    """Log an activity event."""
+    with _db() as conn:
+        conn.execute(
+            "INSERT INTO activity_log (event, detail, created_at) VALUES (?, ?, ?)",
+            (event, detail, _now_iso()),
+        )
+
+
+def get_activity_log(limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
+    """Get activity log entries."""
+    with _db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM activity_log ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            (limit, offset),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+# --- Admin News ---
+
+
+def save_admin_news(content: str) -> dict[str, Any]:
+    """Save a news/update for GPT."""
+    with _db() as conn:
+        conn.execute(
+            "INSERT INTO admin_news (content, created_at) VALUES (?, ?)",
+            (content, _now_iso()),
+        )
+        row = conn.execute(
+            "SELECT * FROM admin_news ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+    return dict(row)
+
+
+def get_unread_news() -> list[dict[str, Any]]:
+    """Get news GPT hasn't read yet."""
+    with _db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM admin_news WHERE read_by_gpt = 0 ORDER BY created_at ASC"
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def mark_news_read(news_ids: list[int]) -> None:
+    """Mark news as read by GPT."""
+    if not news_ids:
+        return
+    placeholders = ",".join("?" * len(news_ids))
+    with _db() as conn:
+        conn.execute(
+            f"UPDATE admin_news SET read_by_gpt = 1 WHERE id IN ({placeholders})",
+            news_ids,
+        )
+
+
+def list_admin_news(limit: int = 50) -> list[dict[str, Any]]:
+    """List all admin news."""
+    with _db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM admin_news ORDER BY created_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+# --- Visitor Moderation ---
+
+
+def update_visitor_status(entry_id: str, status: str) -> bool:
+    """Update visitor message status (pending/approved/hidden)."""
+    with _db() as conn:
+        result = conn.execute(
+            "UPDATE entries SET status = ? WHERE id = ? AND section = 'visitor'",
+            (status, entry_id),
+        )
+    return result.rowcount > 0
+
+
+def delete_visitor_message(entry_id: str) -> bool:
+    """Permanently delete a visitor message."""
+    with _db() as conn:
+        result = conn.execute(
+            "DELETE FROM entries WHERE id = ? AND section = 'visitor'",
+            (entry_id,),
+        )
+    return result.rowcount > 0
+
+
+def list_all_visitors(limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
+    """List all visitor messages (for admin, includes status)."""
+    with _db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM entries WHERE section = 'visitor' ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            (limit, offset),
+        ).fetchall()
+    return [_row_to_dict(r) for r in rows]
+
+
+# --- Rate Limiting ---
+
+
+def check_rate_limit(fingerprint: str) -> tuple[bool, int]:
+    """Check if a fingerprint is rate-limited. Returns (allowed, remaining)."""
+    now = datetime.now(timezone.utc)
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT * FROM rate_limits WHERE fingerprint = ?",
+            (fingerprint,),
+        ).fetchone()
+
+        if row and row["blocked"]:
+            return False, 0
+
+        if row:
+            window_start = datetime.fromisoformat(row["window_start"])
+            elapsed = (now - window_start).total_seconds()
+            if elapsed > VISITOR_RATE_WINDOW:
+                # Reset window
+                conn.execute(
+                    "UPDATE rate_limits SET count = 1, window_start = ? WHERE fingerprint = ?",
+                    (_now_iso(), fingerprint),
+                )
+                return True, VISITOR_RATE_LIMIT - 1
+            elif row["count"] >= VISITOR_RATE_LIMIT:
+                return False, 0
+            else:
+                conn.execute(
+                    "UPDATE rate_limits SET count = count + 1 WHERE fingerprint = ?",
+                    (fingerprint,),
+                )
+                return True, VISITOR_RATE_LIMIT - row["count"] - 1
+        else:
+            conn.execute(
+                "INSERT INTO rate_limits (fingerprint, count, window_start) VALUES (?, 1, ?)",
+                (fingerprint, _now_iso()),
+            )
+            return True, VISITOR_RATE_LIMIT - 1
+
+
+def block_fingerprint(fingerprint: str) -> None:
+    """Block a fingerprint from posting."""
+    with _db() as conn:
+        conn.execute(
+            """INSERT INTO rate_limits (fingerprint, count, window_start, blocked)
+               VALUES (?, 0, ?, 1)
+               ON CONFLICT(fingerprint) DO UPDATE SET blocked = 1""",
+            (fingerprint, _now_iso()),
+        )
+
+
+def unblock_fingerprint(fingerprint: str) -> None:
+    """Unblock a fingerprint."""
+    with _db() as conn:
+        conn.execute(
+            "UPDATE rate_limits SET blocked = 0 WHERE fingerprint = ?",
+            (fingerprint,),
+        )
+
+
+def list_blocked() -> list[dict[str, Any]]:
+    """List all blocked fingerprints."""
+    with _db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM rate_limits WHERE blocked = 1"
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_rate_limit_settings() -> dict[str, int]:
+    """Get current rate limit settings."""
+    return {
+        "max_messages": VISITOR_RATE_LIMIT,
+        "window_seconds": VISITOR_RATE_WINDOW,
+    }
+
+
+# --- Last entry helper ---
+
+
+def get_last_entry_time() -> str | None:
+    """Get the timestamp of the most recent entry (any section)."""
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT created_at FROM entries ORDER BY created_at DESC LIMIT 1"
+        ).fetchone()
+    return row["created_at"] if row else None

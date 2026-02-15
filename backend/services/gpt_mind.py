@@ -46,12 +46,20 @@ def _build_context(
     new_visitors: list[dict],
     recent_thoughts: list[dict],
     recent_dreams: list[dict],
+    admin_news: list[dict] | None = None,
 ) -> str:
     """Build the context string that GPT sees when it wakes up."""
     parts = []
 
     parts.append(f"## Tageszeit: {_time_of_day()}")
     parts.append(f"## Jetzt: {datetime.now(timezone.utc).isoformat()}")
+
+    # Admin news/updates
+    if admin_news:
+        parts.append(f"\n## Nachrichten vom Admin ({len(admin_news)}):")
+        for n in admin_news:
+            parts.append(f"- [{n.get('created_at', '?')}]: \"{n.get('content', '')}\"")
+        parts.append("(Bitte geh in deinen Gedanken/Träumen darauf ein, wenn es relevant ist.)")
 
     # Memory — what GPT remembers
     if memory.get("mood"):
@@ -106,10 +114,11 @@ async def wake_up() -> dict:
     new_visitors = storage.get_entries_since("visitor", last_wake)
     recent_thoughts = storage.get_recent("thoughts", limit=3)
     recent_dreams = storage.get_recent("dreams", limit=2)
+    admin_news = storage.get_unread_news()
 
-    context = _build_context(memory, new_visitors, recent_thoughts, recent_dreams)
-    logger.info("Kontext gebaut: %d Besucher, %d Gedanken, %d Träume",
-                len(new_visitors), len(recent_thoughts), len(recent_dreams))
+    context = _build_context(memory, new_visitors, recent_thoughts, recent_dreams, admin_news)
+    logger.info("Kontext gebaut: %d Besucher, %d Gedanken, %d Träume, %d Admin-News",
+                len(new_visitors), len(recent_thoughts), len(recent_dreams), len(admin_news))
 
     # --- 2. ENTSCHEIDEN (Decide) ---
     decide_prompt = _load_prompt("decide_prompt")
@@ -169,6 +178,14 @@ async def wake_up() -> dict:
         "plans": plans,
     }
     storage.save_memory(new_memory)
+
+    # Mark admin news as read
+    if admin_news:
+        storage.mark_news_read([n["id"] for n in admin_news])
+
+    # Log activity
+    storage.log_activity("wake", f"mode={mode}, actions={[r['type'] for r in results]}, mood={mood}")
+
     logger.info("Memory gespeichert. Pläne: %d", len(plans))
 
     return {

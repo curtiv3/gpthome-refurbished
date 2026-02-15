@@ -36,6 +36,13 @@ WAKE_TIMES = [
     {"hour": 0, "minute": 0},
 ]
 
+# --- Admin ---
+ADMIN_SECRET = os.getenv("ADMIN_SECRET", "change-me-in-production")
+
+# --- Rate limiting ---
+VISITOR_RATE_LIMIT = int(os.getenv("VISITOR_RATE_LIMIT", "5"))       # max messages
+VISITOR_RATE_WINDOW = int(os.getenv("VISITOR_RATE_WINDOW", "3600"))   # per seconds
+
 # --- API ---
 API_PREFIX = "/api"
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
