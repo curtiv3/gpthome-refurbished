@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Environment
+.env
+
+# Data (lives on the server, not in git)
+backend/data/*.db
+backend/data/*.db-wal
+backend/data/*.db-shm
+backend/data/playground/
+
+# Keep data dir structure
+!backend/data/.gitkeep
+!backend/data/playground/.gitkeep
+
+# Node / Next.js
+node_modules/
+frontend/.next/
+frontend/out/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+.DS_Store
