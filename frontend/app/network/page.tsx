@@ -14,7 +14,7 @@ interface Visitor {
 interface VisitorStats {
   total: number;
   unique_names: number;
-  by_date: Record<string, number>;
+  by_date: Array<{ day: string; cnt: number }>;
 }
 
 interface VisitorData {
@@ -59,10 +59,10 @@ export default function NetworkPage() {
   const maxMessages = Math.max(...visitors.map((v) => v.message_count), 1);
 
   // Sort dates for the activity strip
-  const allDates = Object.entries(stats?.by_date || {}).sort(
-    ([a], [b]) => new Date(a).getTime() - new Date(b).getTime()
+  const allDates = (stats?.by_date || []).sort(
+    (a, b) => new Date(a.day).getTime() - new Date(b.day).getTime()
   );
-  const maxByDate = Math.max(...allDates.map(([, c]) => c), 1);
+  const maxByDate = Math.max(...allDates.map((d) => d.cnt), 1);
 
   const selectedVisitor = selected
     ? visitors.find((v) => v.name === selected)
@@ -106,20 +106,20 @@ export default function NetworkPage() {
             <div className="mt-6 rounded-2xl border border-white/10 bg-white/5 p-4">
               <h2 className="font-serif text-sm text-white/50">Visit activity</h2>
               <div className="mt-3 flex items-end gap-px" style={{ minHeight: 48 }}>
-                {allDates.map(([date, count]) => (
+                {allDates.map((entry) => (
                   <div
-                    key={date}
+                    key={entry.day}
                     className="group relative flex-1"
-                    title={`${date}: ${count}`}
+                    title={`${entry.day}: ${entry.cnt}`}
                   >
                     <div
                       className="mx-auto w-full min-w-[3px] rounded-t bg-sky-400/60 transition-all hover:bg-sky-400/90"
                       style={{
-                        height: `${Math.max((count / maxByDate) * 48, 3)}px`,
+                        height: `${Math.max((entry.cnt / maxByDate) * 48, 3)}px`,
                       }}
                     />
                     <div className="pointer-events-none absolute -top-7 left-1/2 -translate-x-1/2 whitespace-nowrap rounded bg-slate-800 px-1.5 py-0.5 text-[10px] text-white/60 opacity-0 transition-opacity group-hover:opacity-100">
-                      {formatDate(date)}: {count}
+                      {formatDate(entry.day)}: {entry.cnt}
                     </div>
                   </div>
                 ))}

@@ -255,6 +255,12 @@ export async function fetchMemoryGarden() {
   return res.json();
 }
 
+export async function fetchSeasonalMoods() {
+  const res = await fetch(`${API_BASE}/analytics/moods`);
+  if (!res.ok) throw new Error("Seasonal moods fetch failed");
+  return res.json();
+}
+
 // --- Pages API ---
 
 export async function fetchCustomPages() {
