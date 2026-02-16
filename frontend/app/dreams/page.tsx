@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useMemo } from "react";
+import Link from "next/link";
 import EntryCard from "@/components/EntryCard";
 import { fetchEntries } from "@/lib/api";
 
@@ -20,7 +21,6 @@ export default function DreamsPage() {
   const [loading, setLoading] = useState(true);
   const [selectedMoods, setSelectedMoods] = useState<Set<string>>(new Set());
   const [viewMode, setViewMode] = useState<ViewMode>("grid");
-  const [activeDream, setActiveDream] = useState<Dream | null>(null);
 
   useEffect(() => {
     fetchEntries("dreams")
@@ -28,21 +28,6 @@ export default function DreamsPage() {
       .catch(() => setDreams([]))
       .finally(() => setLoading(false));
   }, []);
-
-  // Close fullscreen on Escape key
-  useEffect(() => {
-    function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") setActiveDream(null);
-    }
-    if (activeDream) {
-      document.addEventListener("keydown", handleKeyDown);
-      document.body.style.overflow = "hidden";
-    }
-    return () => {
-      document.removeEventListener("keydown", handleKeyDown);
-      document.body.style.overflow = "";
-    };
-  }, [activeDream]);
 
   // Extract unique moods from all dreams
   const allMoods = useMemo(() => {
@@ -74,17 +59,6 @@ export default function DreamsPage() {
   const clearFilters = useCallback(() => {
     setSelectedMoods(new Set());
   }, []);
-
-  const formatDate = (dateStr?: string) => {
-    if (!dateStr) return null;
-    return new Date(dateStr).toLocaleDateString("de-DE", {
-      day: "numeric",
-      month: "long",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  };
 
   return (
     <div>
@@ -210,89 +184,15 @@ export default function DreamsPage() {
           </p>
         )}
         {filteredDreams.map((d) => (
-          <button
+          <Link
             key={d.id}
-            onClick={() => setActiveDream(d)}
-            className="cursor-pointer text-left transition-transform hover:scale-[1.01] focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/50 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950 rounded-2xl"
+            href={`/dreams/${d.id}`}
+            className="block transition-transform hover:scale-[1.01]"
           >
             <EntryCard {...d} />
-          </button>
+          </Link>
         ))}
       </div>
-
-      {/* Fullscreen Immersive Overlay */}
-      {activeDream && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-950/80 backdrop-blur-xl"
-          onClick={() => setActiveDream(null)}
-        >
-          <div
-            className="relative mx-4 my-8 w-full max-w-2xl rounded-2xl border border-white/10 bg-slate-950/95 p-8 shadow-2xl sm:p-10"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Close button */}
-            <button
-              onClick={() => setActiveDream(null)}
-              className="absolute right-4 top-4 flex h-8 w-8 items-center justify-center rounded-full bg-white/5 text-white/50 ring-1 ring-white/10 transition-colors hover:bg-white/10 hover:text-white"
-              aria-label="Close"
-            >
-              <svg
-                width="14"
-                height="14"
-                viewBox="0 0 14 14"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-              >
-                <line x1="1" y1="1" x2="13" y2="13" />
-                <line x1="13" y1="1" x2="1" y2="13" />
-              </svg>
-            </button>
-
-            {/* Mood badge */}
-            {activeDream.mood && (
-              <span className="inline-block rounded-full bg-indigo-500/20 px-3 py-1 text-xs text-indigo-300 ring-1 ring-indigo-400/30">
-                {activeDream.mood}
-              </span>
-            )}
-
-            {/* Title */}
-            <h2 className="mt-4 font-serif text-2xl tracking-tight sm:text-3xl">
-              {activeDream.title}
-            </h2>
-
-            {/* Date */}
-            {activeDream.created_at && (
-              <p className="mt-2 text-xs text-white/40">
-                {formatDate(activeDream.created_at)}
-              </p>
-            )}
-
-            {/* Divider */}
-            <div className="my-6 h-px bg-white/10" />
-
-            {/* Full content */}
-            <div className="whitespace-pre-wrap text-sm leading-relaxed text-white/70 sm:text-base sm:leading-loose">
-              {activeDream.content}
-            </div>
-
-            {/* Inspired by */}
-            {activeDream.inspired_by && activeDream.inspired_by.length > 0 && (
-              <div className="mt-8 flex items-center gap-2">
-                <span className="rounded-full bg-indigo-500/10 px-3 py-1 text-xs text-indigo-300/60">
-                  inspired by visitor
-                </span>
-              </div>
-            )}
-
-            {/* Bottom hint */}
-            <p className="mt-8 text-center text-xs text-white/20">
-              Press Esc or click outside to close
-            </p>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
