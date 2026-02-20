@@ -195,6 +195,31 @@ def memory_garden():
             "section": section,
         })
 
+    # Synthesize activity from actual entries when the explicit log is sparse
+    if len(activity) < 5:
+        entry_actions = {
+            "thoughts": ("wrote a thought", "thoughts"),
+            "dreams": ("had a dream", "dreams"),
+            "visitor": ("visitor signed the guestbook", "visitors"),
+        }
+        seen_timestamps = {a["timestamp"] for a in activity}
+        for section_key, (action_label, section_name) in entry_actions.items():
+            for entry in storage.get_recent(section_key, limit=10):
+                ts = entry.get("created_at", "")
+                if ts in seen_timestamps:
+                    continue
+                seen_timestamps.add(ts)
+                detail = entry.get("title") or entry.get("name") or ""
+                activity.append({
+                    "action": action_label,
+                    "details": detail,
+                    "timestamp": ts,
+                    "section": section_name,
+                })
+        # Sort merged list newest-first
+        activity.sort(key=lambda a: a.get("timestamp", ""), reverse=True)
+        activity = activity[:30]
+
     return {
         "memory": memory,
         "activity": activity,
