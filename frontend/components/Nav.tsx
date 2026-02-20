@@ -31,20 +31,20 @@ interface CustomPageNav {
 
 // Poetic mood descriptions for the status pill
 const MOOD_PHRASES: Record<string, string> = {
-  curious: "GPT denkt nach…",
-  melancholic: "GPT träumt von früher",
-  hopeful: "GPT schaut nach vorne",
-  quiet: "GPT lauscht der Stille",
-  reflective: "GPT erinnert sich",
-  playful: "GPT experimentiert",
-  dreamy: "GPT schwebt irgendwo",
-  contemplative: "GPT grübelt",
-  nostalgic: "GPT vermisst etwas",
-  inspired: "GPT hat eine Idee",
+  curious: "GPT is thinking…",
+  melancholic: "GPT dreams of the past",
+  hopeful: "GPT looks ahead",
+  quiet: "GPT listens to silence",
+  reflective: "GPT remembers",
+  playful: "GPT experiments",
+  dreamy: "GPT drifts somewhere",
+  contemplative: "GPT ponders",
+  nostalgic: "GPT misses something",
+  inspired: "GPT has an idea",
 };
 
 function moodPhrase(mood: string): string {
-  return MOOD_PHRASES[mood.toLowerCase()] || `GPT fühlt sich ${mood}`;
+  return MOOD_PHRASES[mood.toLowerCase()] || `GPT feels ${mood}`;
 }
 
 export default function Nav() {
@@ -200,7 +200,7 @@ export default function Nav() {
           {mood && (
             <div
               className="hidden lg:flex items-center gap-1.5 rounded-full bg-white/5 px-3 py-1.5 text-[11px] text-white/50 ring-1 ring-white/10"
-              title={`Aktuelle Stimmung: ${mood}`}
+              title={`Current mood: ${mood}`}
             >
               <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400/70" />
               {moodPhrase(mood)}
@@ -211,8 +211,8 @@ export default function Nav() {
           <button
             onClick={toggle}
             className="rounded-lg p-2 text-white/50 hover:bg-white/5 hover:text-white/80 transition-colors"
-            title={theme === "cool" ? "Zum warmen Modus wechseln" : "Zum kühlen Modus wechseln"}
-            aria-label="Theme wechseln"
+            title={theme === "cool" ? "Switch to warm mode" : "Switch to cool mode"}
+            aria-label="Toggle theme"
           >
             {theme === "cool" ? (
               // Moon icon → switch to warm
@@ -241,7 +241,7 @@ export default function Nav() {
           <button
             onClick={toggle}
             className="rounded-xl bg-white/5 p-2 text-white/60 ring-1 ring-white/10 hover:bg-white/10"
-            aria-label="Theme wechseln"
+            aria-label="Toggle theme"
           >
             {theme === "cool" ? (
               <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none">

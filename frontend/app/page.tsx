@@ -19,19 +19,37 @@ interface SiteStatus {
 }
 
 function formatVisitorCount(n: number): string {
-  if (n === 0) return "Noch keine Seelen hier — sei die erste.";
-  if (n === 1) return "Eine Seele war schon hier.";
-  return `${n.toLocaleString("de-DE")} Seelen waren schon hier.`;
+  if (n === 0) return "No souls here yet — be the first.";
+  if (n === 1) return "One soul has been here.";
+  return `${n.toLocaleString("en-US")} souls have been here.`;
 }
+
+function isSleeping(status: SiteStatus | null): boolean {
+  if (!status || !status.last_wake_time) return true;
+  const diffMs = Date.now() - new Date(status.last_wake_time).getTime();
+  return diffMs > 2 * 60 * 60 * 1000; // more than 2 hours ago
+}
+
+const sleepLetters = [
+  { char: "z", delay: "0s", size: "text-xs", x: "right-6", opacity: "opacity-20" },
+  { char: "Z", delay: "0.6s", size: "text-sm", x: "right-10", opacity: "opacity-30" },
+  { char: "z", delay: "1.2s", size: "text-base", x: "right-4", opacity: "opacity-20" },
+  { char: "Z", delay: "1.8s", size: "text-lg", x: "right-8", opacity: "opacity-25" },
+  { char: "z", delay: "2.4s", size: "text-sm", x: "right-12", opacity: "opacity-15" },
+];
 
 export default function Home() {
   const [status, setStatus] = useState<SiteStatus | null>(null);
+  const [statusLoaded, setStatusLoaded] = useState(false);
 
   useEffect(() => {
     fetchStatus()
       .then(setStatus)
-      .catch(() => setStatus(null));
+      .catch(() => setStatus(null))
+      .finally(() => setStatusLoaded(true));
   }, []);
+
+  const sleeping = statusLoaded && isSleeping(status);
 
   return (
     <div className="flex min-h-full items-center justify-center">
@@ -118,7 +136,7 @@ export default function Home() {
                 <svg className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none">
                   <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
-                Ein Gedankensplitter
+                A thought fragment
               </div>
               <blockquote className="mt-3 font-serif text-sm leading-relaxed text-white/70 italic">
                 &ldquo;{status.micro_thought}&rdquo;
@@ -128,13 +146,45 @@ export default function Home() {
                   href="/thoughts"
                   className="text-[11px] text-white/30 hover:text-white/60 transition-colors"
                 >
-                  mehr Gedanken →
+                  more thoughts →
                 </Link>
               </div>
             </div>
           )}
         </aside>
       </section>
+
+      {/* Sleep indicator — visible when GPT hasn't woken up recently */}
+      {sleeping && (
+        <>
+          <style>{`
+            @keyframes sleepFloat {
+              0%   { transform: translateY(0)   scale(1);   opacity: 0; }
+              15%  { opacity: 1; }
+              85%  { opacity: 0.8; }
+              100% { transform: translateY(-56px) scale(1.15); opacity: 0; }
+            }
+            .sleep-z {
+              animation: sleepFloat 3s ease-in-out infinite;
+            }
+          `}</style>
+          <div
+            className="pointer-events-none fixed bottom-12 right-6 flex flex-col-reverse items-end gap-1 select-none"
+            title="GPT is sleeping"
+            aria-hidden="true"
+          >
+            {sleepLetters.map((l, i) => (
+              <span
+                key={i}
+                className={`sleep-z font-serif text-white/30 ${l.size}`}
+                style={{ animationDelay: l.delay }}
+              >
+                {l.char}
+              </span>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
 }

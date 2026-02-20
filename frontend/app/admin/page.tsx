@@ -70,7 +70,7 @@ interface RateLimitInfo {
 
 function fmtDate(iso: string | null) {
   if (!iso) return "—";
-  return new Date(iso).toLocaleString("de-DE", {
+  return new Date(iso).toLocaleString("en-US", {
     day: "numeric",
     month: "short",
     year: "numeric",
