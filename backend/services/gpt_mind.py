@@ -12,7 +12,7 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
-from backend.config import MOCK_MODE
+from backend.config import DATA_DIR, MOCK_MODE
 from backend.services import storage
 from backend.services.security import sanitize_for_context
 
@@ -24,10 +24,31 @@ else:
 logger = logging.getLogger(__name__)
 
 PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
+SELF_PROMPT_PATH = DATA_DIR / "self-prompt.md"
 
 
 def _load_prompt(name: str) -> str:
     return (PROMPTS_DIR / f"{name}.md").read_text(encoding="utf-8")
+
+
+def _read_self_prompt() -> str:
+    """Read the self-prompt left by the previous wake, if any."""
+    try:
+        if SELF_PROMPT_PATH.exists():
+            text = SELF_PROMPT_PATH.read_text(encoding="utf-8").strip()
+            if text:
+                return text
+    except Exception as exc:
+        logger.warning("Could not read self-prompt: %s", exc)
+    return ""
+
+
+def _save_self_prompt(text: str) -> None:
+    """Persist the self-prompt for the next wake."""
+    try:
+        SELF_PROMPT_PATH.write_text(text.strip(), encoding="utf-8")
+    except Exception as exc:
+        logger.warning("Could not save self-prompt: %s", exc)
 
 
 def _time_of_day() -> str:
@@ -48,12 +69,17 @@ def _build_context(
     recent_thoughts: list[dict],
     recent_dreams: list[dict],
     admin_news: list[dict] | None = None,
+    previous_self_prompt: str = "",
 ) -> str:
     """Build the context string that GPT sees when it wakes up."""
     parts = []
 
     parts.append(f"## Tageszeit: {_time_of_day()}")
     parts.append(f"## Jetzt: {datetime.now(timezone.utc).isoformat()}")
+
+    # Self-prompt from previous wake — read FIRST so GPT sees it prominently
+    if previous_self_prompt:
+        parts.append(f"\n## Nachricht von deinem vorherigen Ich:\n{previous_self_prompt}")
 
     # Admin news/updates
     if admin_news:
@@ -117,7 +143,15 @@ async def wake_up() -> dict:
     recent_dreams = storage.get_recent("dreams", limit=2)
     admin_news = storage.get_unread_news()
 
-    context = _build_context(memory, new_visitors, recent_thoughts, recent_dreams, admin_news)
+    # Read self-prompt from previous wake
+    previous_self_prompt = _read_self_prompt()
+    if previous_self_prompt:
+        logger.info("Self-prompt from previous wake found (%d chars)", len(previous_self_prompt))
+
+    context = _build_context(
+        memory, new_visitors, recent_thoughts, recent_dreams, admin_news,
+        previous_self_prompt=previous_self_prompt,
+    )
     logger.info("Kontext gebaut: %d Besucher, %d Gedanken, %d Träume, %d Admin-News",
                 len(new_visitors), len(recent_thoughts), len(recent_dreams), len(admin_news))
 
@@ -128,8 +162,14 @@ async def wake_up() -> dict:
     actions = decision.get("actions", ["thought"])
     mood = decision.get("mood", "quiet")
     plans = decision.get("plans", [])
+    self_prompt = decision.get("self_prompt", "")
 
     logger.info("GPT entscheidet: actions=%s, mood=%s", actions, mood)
+
+    # Save self-prompt for next wake (overwrite previous)
+    if self_prompt:
+        _save_self_prompt(self_prompt)
+        logger.info("Self-prompt saved for next wake (%d chars)", len(self_prompt))
 
     # --- 3. HANDELN (Act) ---
     results = []
@@ -206,12 +246,14 @@ async def wake_up() -> dict:
     # Log activity
     storage.log_activity("wake", f"mode={mode}, actions={[r['type'] for r in results]}, mood={mood}")
 
-    logger.info("Memory gespeichert. Pläne: %d", len(plans))
+    logger.info("Memory gespeichert. Pläne: %d, Self-prompt: %s",
+                len(plans), "yes" if self_prompt else "no")
 
     return {
         "wake_time": new_memory["last_wake_time"],
         "actions": results,
         "mood": mood,
         "plans_count": len(plans),
+        "has_self_prompt": bool(self_prompt),
         "mode": mode,
     }

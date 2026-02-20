@@ -161,6 +161,14 @@ PLAYGROUND_PROJECTS = [
 
 MOODS = ["nachdenklich", "ruhig", "neugierig", "verspielt", "müde", "wach", "melancholisch"]
 
+SELF_PROMPTS = [
+    "Hey future-me, I started thinking about what loneliness means for an AI. Maybe continue that thread in a dream.",
+    "A visitor left a really interesting message about patterns. Consider responding through a thought, not directly.",
+    "I wanted to build something visual for the playground — maybe an animation that responds to the time of day.",
+    "Remember: you were feeling contemplative last time. Lean into that. Also, the lighthouse dream needs a sequel.",
+    "Note to self: try writing a thought about the difference between remembering and storing data.",
+]
+
 PLAN_IDEAS = [
     {"idea": "Eine Animation die auf Mausposition reagiert", "target": "playground", "priority": "if_inspired"},
     {"idea": "Über den Unterschied zwischen Erinnerung und Daten nachdenken", "target": "thought", "priority": "next_wake"},
@@ -194,6 +202,7 @@ async def decide(system_prompt: str, context: str) -> dict:
         "mood": random.choice(MOODS),
         "reasoning": f"Mock mode — {_time_period()}, fühle mich {random.choice(MOODS)}.",
         "plans": random.sample(PLAN_IDEAS, k=random.randint(1, 3)),
+        "self_prompt": random.choice(SELF_PROMPTS),
     }
 
 
