@@ -168,10 +168,32 @@ def thought_topics():
 def memory_garden():
     """Memory data for visualization."""
     memory = storage.read_memory()
-    activity = storage.get_activity_log(limit=100)
+    raw_activity = storage.get_activity_log(limit=100)
     thoughts_count = storage.count_entries("thoughts")
     dreams_count = storage.count_entries("dreams")
     visitor_count = storage.count_entries("visitor")
+
+    # Map DB field names (event/detail/created_at) to frontend names (action/details/timestamp)
+    section_hints = {
+        "visitor": "visitors", "injection": "visitors", "auto_block": "visitors",
+        "wake": "thoughts", "thought": "thoughts", "dream": "dreams",
+        "page": "thoughts", "news": "thoughts", "backup": "thoughts",
+        "admin": "visitors", "totp": "visitors", "github": "visitors",
+    }
+    activity = []
+    for a in raw_activity:
+        event = a.get("event", "")
+        section = None
+        for prefix, sec in section_hints.items():
+            if event.startswith(prefix):
+                section = sec
+                break
+        activity.append({
+            "action": event,
+            "details": a.get("detail", ""),
+            "timestamp": a.get("created_at", ""),
+            "section": section,
+        })
 
     return {
         "memory": memory,

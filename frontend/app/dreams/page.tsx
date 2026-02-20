@@ -31,7 +31,7 @@ export default function DreamsPage() {
   const [viewMode, setViewMode] = useState<ViewMode>("grid");
 
   useEffect(() => {
-    fetchEntries("dreams")
+    fetchEntries("dreams", 50)
       .then(setDreams)
       .catch(() => setDreams([]))
       .finally(() => setLoading(false));
