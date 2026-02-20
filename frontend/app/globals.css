@@ -2,8 +2,131 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ============================================================
+   THEME — CSS custom properties for background theming
+   Two modes:
+     default = "cool" (deep blue-dark, slate-950)
+     html.warm = "warm" (deep amber-dark, more cozy)
+   ============================================================ */
+
+:root {
+  --gpt-bg: 2 6 23;           /* slate-950 — cool dark */
+  --gpt-nav-bg: 2 6 23;
+  --gpt-nav-opacity: 0.6;
+  --gpt-transition: background-color 0.6s ease;
+}
+
+html.warm {
+  --gpt-bg: 10 5 1;           /* very deep warm dark, hint of amber */
+  --gpt-nav-bg: 10 5 1;
+}
+
+/* Apply base background */
+.gpt-body {
+  background-color: rgb(var(--gpt-bg));
+  transition: var(--gpt-transition);
+}
+
+.gpt-nav {
+  background-color: rgb(var(--gpt-nav-bg) / 0.6);
+  transition: var(--gpt-transition);
+}
+
+.gpt-nav-70 {
+  background-color: rgb(var(--gpt-nav-bg) / 0.7);
+  transition: var(--gpt-transition);
+}
+
+.gpt-nav-solid {
+  background-color: rgb(var(--gpt-nav-bg));
+  transition: var(--gpt-transition);
+}
+
+/* ============================================================
+   ATMOSPHERIC OVERLAYS — subtle tint based on time of day
+   Applied to <html> by ThemeProvider.
+   Low-opacity, purely decorative gradients.
+   ============================================================ */
+
+html.morning body::after,
+html.day body::after,
+html.evening body::after,
+html.night body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  transition: opacity 2s ease;
+}
+
+/* Morning: soft sky-blue glow at top */
+html.morning body::after {
+  background: radial-gradient(
+    ellipse 80% 40% at 50% 0%,
+    rgba(147, 197, 253, 0.05) 0%,
+    transparent 70%
+  );
+}
+
+/* Day: neutral, no tint */
+html.day body::after {
+  opacity: 0;
+}
+
+/* Evening: warm amber glow at bottom */
+html.evening body::after {
+  background: radial-gradient(
+    ellipse 80% 50% at 50% 100%,
+    rgba(251, 146, 60, 0.06) 0%,
+    transparent 70%
+  );
+}
+
+/* Night: deep violet at top-right (like moonlight) */
+html.night body::after {
+  background: radial-gradient(
+    ellipse 60% 40% at 80% 0%,
+    rgba(139, 92, 246, 0.04) 0%,
+    transparent 70%
+  );
+}
+
+/* ============================================================
+   ENTRY AGE FADE — older entries appear softer
+   Classes computed in JS based on entry age:
+     entry-age-old       = 14–30 days old
+     entry-age-very-old  = 30+ days old
+   ============================================================ */
+
+.entry-age-old {
+  opacity: 0.6;
+  transition: opacity 0.25s ease;
+}
+
+.entry-age-old:hover {
+  opacity: 1;
+}
+
+.entry-age-very-old {
+  opacity: 0.38;
+  transition: opacity 0.25s ease;
+}
+
+.entry-age-very-old:hover {
+  opacity: 1;
+}
+
+/* ============================================================
+   MISC
+   ============================================================ */
+
 @media (prefers-reduced-motion: reduce) {
   .animate-drift {
     animation: none !important;
+  }
+  .entry-age-old,
+  .entry-age-very-old {
+    opacity: 1 !important;
   }
 }

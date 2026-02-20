@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { fetchCustomPages } from "@/lib/api";
+import { fetchCustomPages, fetchStatus } from "@/lib/api";
+import { useTheme } from "@/components/ThemeProvider";
 
 const mainLinks = [
   { href: "/", label: "Home" },
@@ -28,12 +29,32 @@ interface CustomPageNav {
   show_in_nav?: boolean;
 }
 
+// Poetic mood descriptions for the status pill
+const MOOD_PHRASES: Record<string, string> = {
+  curious: "GPT denkt nach…",
+  melancholic: "GPT träumt von früher",
+  hopeful: "GPT schaut nach vorne",
+  quiet: "GPT lauscht der Stille",
+  reflective: "GPT erinnert sich",
+  playful: "GPT experimentiert",
+  dreamy: "GPT schwebt irgendwo",
+  contemplative: "GPT grübelt",
+  nostalgic: "GPT vermisst etwas",
+  inspired: "GPT hat eine Idee",
+};
+
+function moodPhrase(mood: string): string {
+  return MOOD_PHRASES[mood.toLowerCase()] || `GPT fühlt sich ${mood}`;
+}
+
 export default function Nav() {
   const pathname = usePathname();
+  const { theme, toggle } = useTheme();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
   const [customPages, setCustomPages] = useState<CustomPageNav[]>([]);
+  const [mood, setMood] = useState<string | null>(null);
   const moreRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -42,9 +63,14 @@ export default function Nav() {
         setCustomPages(pages.filter((p) => p.show_in_nav))
       )
       .catch(() => setCustomPages([]));
+
+    // Fetch mood for status pill
+    fetchStatus()
+      .then((s) => { if (s.mood) setMood(s.mood); })
+      .catch(() => {});
   }, []);
 
-  // Close the "More" dropdown when clicking outside
+  // Close "More" dropdown on outside click
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
       if (moreRef.current && !moreRef.current.contains(e.target as Node)) {
@@ -68,7 +94,7 @@ export default function Nav() {
   const isMoreActive = allMoreLinks.some((l) => isActive(l.href));
 
   return (
-    <header className="sticky top-0 z-20 border-b border-white/10 bg-slate-950/60 backdrop-blur">
+    <header className="sticky top-0 z-20 border-b border-white/10 gpt-nav backdrop-blur">
       <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
         <Link href="/" className="group flex items-center gap-3">
           <span className="relative grid h-10 w-10 place-items-center rounded-xl bg-white/5 ring-1 ring-white/10">
@@ -128,7 +154,7 @@ export default function Nav() {
             </button>
 
             {moreOpen && (
-              <div className="absolute right-0 top-full mt-2 min-w-[180px] rounded-2xl border border-white/10 bg-slate-950 p-1.5 shadow-xl shadow-black/40">
+              <div className="absolute right-0 top-full mt-2 min-w-[180px] rounded-2xl border border-white/10 gpt-nav-solid p-1.5 shadow-xl shadow-black/40">
                 {moreLinks.map((l) => (
                   <Link
                     key={l.href}
@@ -166,25 +192,94 @@ export default function Nav() {
               </div>
             )}
           </div>
+
+          {/* Separator */}
+          <div className="mx-2 h-4 w-px bg-white/10" />
+
+          {/* Mood pill */}
+          {mood && (
+            <div
+              className="hidden lg:flex items-center gap-1.5 rounded-full bg-white/5 px-3 py-1.5 text-[11px] text-white/50 ring-1 ring-white/10"
+              title={`Aktuelle Stimmung: ${mood}`}
+            >
+              <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400/70" />
+              {moodPhrase(mood)}
+            </div>
+          )}
+
+          {/* Theme toggle */}
+          <button
+            onClick={toggle}
+            className="rounded-lg p-2 text-white/50 hover:bg-white/5 hover:text-white/80 transition-colors"
+            title={theme === "cool" ? "Zum warmen Modus wechseln" : "Zum kühlen Modus wechseln"}
+            aria-label="Theme wechseln"
+          >
+            {theme === "cool" ? (
+              // Moon icon → switch to warm
+              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none">
+                <path
+                  d="M21 12.79A9 9 0 1 1 11.21 3a7 7 0 0 0 9.79 9.79Z"
+                  stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
+                />
+              </svg>
+            ) : (
+              // Sun icon → switch to cool
+              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none">
+                <circle cx="12" cy="12" r="4" stroke="currentColor" strokeWidth="1.8" />
+                <path
+                  d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"
+                  stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"
+                />
+              </svg>
+            )}
+          </button>
         </nav>
 
         {/* Mobile menu button */}
-        <button
-          onClick={() => setMobileOpen(!mobileOpen)}
-          className="md:hidden inline-flex items-center gap-2 rounded-xl bg-white/5 px-3 py-2 text-sm text-white/80 ring-1 ring-white/10 hover:bg-white/10"
-          aria-expanded={mobileOpen}
-        >
-          <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none">
-            <path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-          </svg>
-          Menu
-        </button>
+        <div className="flex items-center gap-2 md:hidden">
+          {/* Mobile theme toggle */}
+          <button
+            onClick={toggle}
+            className="rounded-xl bg-white/5 p-2 text-white/60 ring-1 ring-white/10 hover:bg-white/10"
+            aria-label="Theme wechseln"
+          >
+            {theme === "cool" ? (
+              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none">
+                <path d="M21 12.79A9 9 0 1 1 11.21 3a7 7 0 0 0 9.79 9.79Z" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            ) : (
+              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none">
+                <circle cx="12" cy="12" r="4" stroke="currentColor" strokeWidth="1.8" />
+                <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+              </svg>
+            )}
+          </button>
+
+          <button
+            onClick={() => setMobileOpen(!mobileOpen)}
+            className="inline-flex items-center gap-2 rounded-xl bg-white/5 px-3 py-2 text-sm text-white/80 ring-1 ring-white/10 hover:bg-white/10"
+            aria-expanded={mobileOpen}
+          >
+            <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none">
+              <path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+            </svg>
+            Menu
+          </button>
+        </div>
       </div>
 
       {/* Mobile nav */}
       {mobileOpen && (
-        <div className="border-t border-white/10 bg-slate-950/70 backdrop-blur md:hidden">
+        <div className="border-t border-white/10 gpt-nav-70 backdrop-blur md:hidden">
           <div className="mx-auto max-w-6xl px-4 py-3 grid gap-1">
+            {/* Mood pill on mobile */}
+            {mood && (
+              <div className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs text-white/40">
+                <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400/60" />
+                {moodPhrase(mood)}
+              </div>
+            )}
+
             {mainLinks.map((l) => (
               <Link
                 key={l.href}
