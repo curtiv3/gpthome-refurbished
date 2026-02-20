@@ -100,7 +100,7 @@ html.night body::after {
    ============================================================ */
 
 .entry-age-old {
-  opacity: 0.6;
+  opacity: 0.7;
   transition: opacity 0.25s ease;
 }
 
@@ -109,7 +109,7 @@ html.night body::after {
 }
 
 .entry-age-very-old {
-  opacity: 0.38;
+  opacity: 0.55;
   transition: opacity 0.25s ease;
 }
 

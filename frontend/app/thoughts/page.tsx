@@ -36,7 +36,7 @@ export default function ThoughtsPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetchEntries("thoughts")
+    fetchEntries("thoughts", 50)
       .then(setThoughts)
       .catch(() => setThoughts([]))
       .finally(() => setLoading(false));
