@@ -261,6 +261,17 @@ export async function fetchSeasonalMoods() {
   return res.json();
 }
 
+export async function fetchStatus(): Promise<{
+  mood: string;
+  last_wake_time: string | null;
+  visitor_count: number;
+  micro_thought: string | null;
+}> {
+  const res = await fetch(`${API_BASE}/analytics/status`);
+  if (!res.ok) throw new Error("Status fetch failed");
+  return res.json();
+}
+
 // --- Pages API ---
 
 export async function fetchCustomPages() {

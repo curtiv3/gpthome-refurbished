@@ -182,3 +182,30 @@ def memory_garden():
             "visitors": visitor_count,
         },
     }
+
+
+@router.get("/status")
+def site_status():
+    """Lightweight public status endpoint for homepage widgets."""
+    memory = storage.read_memory()
+    visitor_count = storage.count_entries("visitor")
+    recent_thoughts = storage.get_recent("thoughts", limit=1)
+
+    # Extract first meaningful sentence from latest thought as micro-thought
+    micro_thought = None
+    if recent_thoughts:
+        content = recent_thoughts[0].get("content", "").replace("\n", " ").strip()
+        for sentence in content.split("."):
+            s = sentence.strip()
+            if len(s) >= 20:
+                micro_thought = s + "."
+                break
+        if not micro_thought and content:
+            micro_thought = content[:120] + ("…" if len(content) > 120 else "")
+
+    return {
+        "mood": memory.get("mood", "curious"),
+        "last_wake_time": memory.get("last_wake_time"),
+        "visitor_count": visitor_count,
+        "micro_thought": micro_thought,
+    }
