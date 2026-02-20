@@ -111,8 +111,10 @@ def code_stats():
 
 @router.get("/thoughts/topics")
 def thought_topics():
-    """Extract topic keywords from thoughts for constellation view."""
+    """Extract topic keywords from thoughts and dreams for constellation view."""
     thoughts = storage.get_entries_with_dates("thoughts")
+    dreams = storage.get_entries_with_dates("dreams")
+    all_entries = thoughts + dreams
 
     # Simple word frequency analysis (skip common words)
     stop_words = {
@@ -130,36 +132,69 @@ def thought_topics():
         "einem", "einer", "einen", "dieses", "diese", "diese", "mein",
         "sein", "ihre", "ganz", "sehr", "dann", "immer", "keine",
         "kein", "bei", "bis", "durch", "unter", "weil", "wie",
+        "when", "what", "where", "which", "how", "their", "your",
+        "could", "should", "does", "each", "every", "other", "like",
+        "also", "even", "still", "only", "much", "such", "same",
+        "most", "many", "well", "back", "they", "those", "these",
+        "being", "make", "made", "know", "want", "think", "come",
+        "take", "over", "after", "before", "between", "through",
+        "because", "something", "things", "thing", "really", "never",
+        "always", "often", "maybe", "though", "while", "until",
     }
 
     word_freq: dict[str, int] = {}
-    word_to_thoughts: dict[str, list[str]] = {}
+    word_to_entries: dict[str, list[str]] = {}
+    # Track which top-words appear in each entry (for co-occurrence edges)
+    entry_words: dict[str, set[str]] = {}
 
-    for t in thoughts:
-        content = t.get("content", "") + " " + t.get("title", "")
-        words = [w.lower().strip(".,!?;:\"'()") for w in content.split() if len(w) > 3]
+    for entry in all_entries:
+        eid = entry.get("id", "")
+        content = entry.get("content", "") + " " + entry.get("title", "")
+        words = [w.lower().strip(".,!?;:\"'()-") for w in content.split() if len(w) > 3]
+        unique_words: set[str] = set()
         for word in words:
             if word not in stop_words and word.isalpha():
                 word_freq[word] = word_freq.get(word, 0) + 1
-                word_to_thoughts.setdefault(word, []).append(t.get("id", ""))
+                word_to_entries.setdefault(word, []).append(eid)
+                unique_words.add(word)
+        entry_words[eid] = unique_words
 
     # Top topics
     topics = sorted(word_freq.items(), key=lambda x: -x[1])[:40]
+    top_words = {w for w, _ in topics}
+
+    # Build co-occurrence edges: two top-words share an edge if they appear in the same entry
+    edge_counts: dict[tuple[str, str], int] = {}
+    for eid, words in entry_words.items():
+        shared = words & top_words
+        shared_list = sorted(shared)
+        for i, a in enumerate(shared_list):
+            for b in shared_list[i + 1:]:
+                key = (a, b)
+                edge_counts[key] = edge_counts.get(key, 0) + 1
+
+    # Only keep edges with weight >= 1
+    edges = [
+        {"source": a, "target": b, "weight": w}
+        for (a, b), w in sorted(edge_counts.items(), key=lambda x: -x[1])[:80]
+    ]
 
     return {
         "topics": [
-            {"word": w, "count": c, "thought_ids": list(set(word_to_thoughts.get(w, [])))}
+            {"word": w, "count": c, "entry_ids": list(set(word_to_entries.get(w, [])))}
             for w, c in topics
         ],
-        "thoughts": [
+        "edges": edges,
+        "entries": [
             {
-                "id": t.get("id"),
-                "title": t.get("title", ""),
-                "mood": t.get("mood", ""),
-                "created_at": t.get("created_at"),
-                "preview": t.get("content", "")[:120],
+                "id": entry.get("id"),
+                "title": entry.get("title", ""),
+                "mood": entry.get("mood", ""),
+                "section": entry.get("section", ""),
+                "created_at": entry.get("created_at"),
+                "preview": entry.get("content", "")[:120],
             }
-            for t in thoughts
+            for entry in all_entries
         ],
     }
 
