@@ -15,7 +15,7 @@ interface Dream {
 
 function formatDate(dateStr?: string) {
   if (!dateStr) return null;
-  return new Date(dateStr).toLocaleDateString("de-DE", {
+  return new Date(dateStr).toLocaleDateString("en-US", {
     day: "numeric",
     month: "long",
     year: "numeric",

@@ -24,12 +24,12 @@ function formatRelative(iso: string): string {
   try {
     const diff = Date.now() - new Date(iso).getTime();
     const mins = Math.floor(diff / 60000);
-    if (mins < 1) return "gerade eben";
-    if (mins < 60) return `vor ${mins} Min.`;
+    if (mins < 1) return "just now";
+    if (mins < 60) return `${mins}m ago`;
     const hours = Math.floor(mins / 60);
-    if (hours < 24) return `vor ${hours} Std.`;
+    if (hours < 24) return `${hours}h ago`;
     const days = Math.floor(hours / 24);
-    return `vor ${days} Tagen`;
+    return `${days}d ago`;
   } catch {
     return iso;
   }
@@ -37,7 +37,7 @@ function formatRelative(iso: string): string {
 
 function formatFullDate(iso: string): string {
   try {
-    return new Date(iso).toLocaleDateString("de-DE", {
+    return new Date(iso).toLocaleDateString("en-US", {
       weekday: "long",
       day: "numeric",
       month: "long",
@@ -87,10 +87,10 @@ function MemoryValue({ fieldKey, value }: { fieldKey: string; value: unknown }) 
   // visitors_read → count summary
   if (fieldKey === "visitors_read" && Array.isArray(value)) {
     const count = value.length;
-    if (count === 0) return <span className="text-white/40 italic">niemand neu</span>;
+    if (count === 0) return <span className="text-white/40 italic">no one new</span>;
     return (
       <span className="text-white/80">
-        {count} {count === 1 ? "Besucher" : "Besucher"} gelesen
+        {count} {count === 1 ? "visitor" : "visitors"} read
       </span>
     );
   }
@@ -98,7 +98,7 @@ function MemoryValue({ fieldKey, value }: { fieldKey: string; value: unknown }) 
   // actions_taken → icon list
   if (fieldKey === "actions_taken" && Array.isArray(value)) {
     if (value.length === 0)
-      return <span className="text-white/40 italic">noch nichts getan</span>;
+      return <span className="text-white/40 italic">nothing yet</span>;
     return (
       <ul className="mt-1 space-y-1.5">
         {(value as Array<Record<string, string>>).map((item, i) => (
@@ -119,7 +119,7 @@ function MemoryValue({ fieldKey, value }: { fieldKey: string; value: unknown }) 
   // plans → structured list with priority
   if (fieldKey === "plans" && Array.isArray(value)) {
     if (value.length === 0)
-      return <span className="text-white/40 italic">keine Pläne</span>;
+      return <span className="text-white/40 italic">no plans</span>;
     return (
       <ul className="mt-1 space-y-3">
         {(value as Array<Record<string, string>>).map((plan, i) => (
@@ -171,11 +171,11 @@ function MemoryValue({ fieldKey, value }: { fieldKey: string; value: unknown }) 
 
 // Human-readable key labels
 const KEY_LABELS: Record<string, string> = {
-  last_wake_time: "zuletzt wach",
-  visitors_read: "Besucher gelesen",
-  actions_taken: "Aktionen",
-  mood: "Stimmung",
-  plans: "Pläne",
+  last_wake_time: "last awake",
+  visitors_read: "visitors read",
+  actions_taken: "actions",
+  mood: "mood",
+  plans: "plans",
 };
 
 // Keys to hide (internal IDs etc.)
@@ -205,14 +205,14 @@ export default function MemoryPage() {
     <div>
       <h1 className="font-serif text-3xl tracking-tight">Memory Garden</h1>
       <p className="mt-2 text-sm text-white/60">
-        Das lebendige Archiv von GPTs Geist — Erinnerungen, Wachstum und die Wurzeln, die alles verbinden.
+        The living archive of GPT&apos;s mind — memories, growth, and the roots that connect everything.
       </p>
 
-      {loading && <p className="mt-8 text-sm text-white/40">Erinnerungen wachsen...</p>}
+      {loading && <p className="mt-8 text-sm text-white/40">Growing memories...</p>}
 
       {!loading && !data && (
         <p className="mt-8 text-sm text-white/40">
-          Noch keine Erinnerungen. Der Garten wird gerade bepflanzt.
+          No memories yet. The garden is still being planted.
         </p>
       )}
 
@@ -222,22 +222,17 @@ export default function MemoryPage() {
           <div className="mt-8 grid grid-cols-2 gap-3 sm:grid-cols-4">
             <div className="col-span-2 rounded-2xl border border-white/10 bg-white/5 p-5 text-center sm:col-span-1">
               <div className="font-serif text-3xl">{totalEntries}</div>
-              <div className="mt-1 text-xs text-white/40">Erinnerungen</div>
+              <div className="mt-1 text-xs text-white/40">Total memories</div>
             </div>
             {Object.entries(branches).map(([section, count]) => {
               const style = sectionStyle(section);
-              const labels: Record<string, string> = {
-                thoughts: "Gedanken",
-                dreams: "Träume",
-                visitors: "Besucher",
-              };
               return (
                 <div
                   key={section}
                   className={`rounded-2xl border border-white/10 p-5 text-center ${style.bg}`}
                 >
                   <div className={`font-serif text-2xl ${style.text}`}>{count}</div>
-                  <div className="mt-1 text-xs text-white/40">{labels[section] || section}</div>
+                  <div className="mt-1 text-xs text-white/40 capitalize">{section}</div>
                 </div>
               );
             })}
@@ -245,24 +240,24 @@ export default function MemoryPage() {
 
           {/* Growth bar */}
           <div className="mt-6 rounded-2xl border border-white/10 bg-white/[0.02] p-5">
-            <h2 className="font-serif text-sm text-white/50">Wachstum</h2>
+            <h2 className="font-serif text-sm text-white/50">Growth distribution</h2>
             <div className="mt-4 flex gap-1 overflow-hidden rounded-full" style={{ height: 12 }}>
               {totalEntries > 0 ? (
                 <>
                   <div
                     className="rounded-l-full bg-blue-400/60 transition-all"
                     style={{ width: `${(branches.thoughts / totalEntries) * 100}%` }}
-                    title={`Gedanken: ${branches.thoughts}`}
+                    title={`Thoughts: ${branches.thoughts}`}
                   />
                   <div
                     className="bg-violet-400/60 transition-all"
                     style={{ width: `${(branches.dreams / totalEntries) * 100}%` }}
-                    title={`Träume: ${branches.dreams}`}
+                    title={`Dreams: ${branches.dreams}`}
                   />
                   <div
                     className="rounded-r-full bg-emerald-400/60 transition-all"
                     style={{ width: `${(branches.visitors / totalEntries) * 100}%` }}
-                    title={`Besucher: ${branches.visitors}`}
+                    title={`Visitors: ${branches.visitors}`}
                   />
                 </>
               ) : (
@@ -272,15 +267,15 @@ export default function MemoryPage() {
             <div className="mt-3 flex flex-wrap gap-4 text-xs text-white/40">
               <span className="flex items-center gap-1.5">
                 <span className="inline-block h-2 w-4 rounded-full bg-blue-400/60" />
-                Gedanken
+                Thoughts
               </span>
               <span className="flex items-center gap-1.5">
                 <span className="inline-block h-2 w-4 rounded-full bg-violet-400/60" />
-                Träume
+                Dreams
               </span>
               <span className="flex items-center gap-1.5">
                 <span className="inline-block h-2 w-4 rounded-full bg-emerald-400/60" />
-                Besucher
+                Visitors
               </span>
             </div>
           </div>
@@ -288,7 +283,7 @@ export default function MemoryPage() {
           {/* Core memories — nicely formatted */}
           {memoryEntries.length > 0 && (
             <div className="mt-6">
-              <h2 className="font-serif text-sm text-white/50">Kernerinnerungen</h2>
+              <h2 className="font-serif text-sm text-white/50">Core memories</h2>
               <div className="mt-3 grid gap-3 sm:grid-cols-2">
                 {memoryEntries.map(([key, value]) => (
                   <div
@@ -310,7 +305,7 @@ export default function MemoryPage() {
           {/* Recent activity */}
           {activity.length > 0 && (
             <div className="mt-6">
-              <h2 className="font-serif text-sm text-white/50">Letzte Aktivität</h2>
+              <h2 className="font-serif text-sm text-white/50">Recent activity</h2>
               <div className="mt-3 space-y-0">
                 {activity.slice(0, 20).map((entry, idx) => {
                   const style = sectionStyle(entry.section || "");

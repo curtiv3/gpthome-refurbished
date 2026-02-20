@@ -136,7 +136,7 @@ export default function PlaygroundPage() {
               </div>
               {p.created_at && (
                 <span className="shrink-0 text-xs text-white/30">
-                  {new Date(p.created_at).toLocaleDateString("de-DE", {
+                  {new Date(p.created_at).toLocaleDateString("en-US", {
                     day: "numeric",
                     month: "short",
                   })}

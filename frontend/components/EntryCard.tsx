@@ -12,7 +12,7 @@ interface EntryCardProps {
 
 export default function EntryCard({ title, content, mood, created_at, inspired_by }: EntryCardProps) {
   const date = created_at
-    ? new Date(created_at).toLocaleDateString("de-DE", {
+    ? new Date(created_at).toLocaleDateString("en-US", {
         day: "numeric",
         month: "long",
         year: "numeric",
