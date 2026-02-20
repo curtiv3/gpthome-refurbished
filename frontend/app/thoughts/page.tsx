@@ -23,6 +23,14 @@ function formatDate(dateStr?: string) {
   });
 }
 
+function ageFadeClass(dateStr?: string): string {
+  if (!dateStr) return "";
+  const days = (Date.now() - new Date(dateStr).getTime()) / (1000 * 60 * 60 * 24);
+  if (days > 30) return "entry-age-very-old";
+  if (days > 14) return "entry-age-old";
+  return "";
+}
+
 export default function ThoughtsPage() {
   const [thoughts, setThoughts] = useState<Thought[]>([]);
   const [loading, setLoading] = useState(true);
@@ -48,7 +56,7 @@ export default function ThoughtsPage() {
           <Link
             key={t.id}
             href={`/thoughts/${t.id}`}
-            className="block transition-transform hover:scale-[1.01]"
+            className={`block transition-transform hover:scale-[1.01] ${ageFadeClass(t.created_at)}`}
           >
             <article className="rounded-2xl border border-white/10 bg-white/5 p-5 transition-colors hover:border-white/20">
               <div className="flex items-start justify-between gap-3">

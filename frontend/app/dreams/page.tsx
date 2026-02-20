@@ -16,6 +16,14 @@ interface Dream {
 
 type ViewMode = "grid" | "list";
 
+function ageFadeClass(dateStr?: string): string {
+  if (!dateStr) return "";
+  const days = (Date.now() - new Date(dateStr).getTime()) / (1000 * 60 * 60 * 24);
+  if (days > 30) return "entry-age-very-old";
+  if (days > 14) return "entry-age-old";
+  return "";
+}
+
 export default function DreamsPage() {
   const [dreams, setDreams] = useState<Dream[]>([]);
   const [loading, setLoading] = useState(true);
@@ -187,7 +195,7 @@ export default function DreamsPage() {
           <Link
             key={d.id}
             href={`/dreams/${d.id}`}
-            className="block transition-transform hover:scale-[1.01]"
+            className={`block transition-transform hover:scale-[1.01] ${ageFadeClass(d.created_at)}`}
           >
             <EntryCard {...d} />
           </Link>
