@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useMemo } from "react";
+import { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import Link from "next/link";
 import { fetchThoughtTopics } from "@/lib/api";
 
@@ -53,30 +53,121 @@ function formatDate(iso: string): string {
   }
 }
 
-/** Deterministic pseudo-random from a string (simple hash). */
+/** Deterministic seed from a string. */
 function hashSeed(str: string): number {
   let h = 0;
   for (let i = 0; i < str.length; i++) {
     h = (h * 31 + str.charCodeAt(i)) | 0;
   }
-  return (h >>> 0) / 0xffffffff; // 0..1
+  return (h >>> 0) / 0xffffffff;
 }
 
-/** Return stable {x,y} for each topic word, scattered in a rectangle. */
-function starPositions(topics: Topic[], w: number, h: number) {
-  const pad = 48;
-  const usableW = w - pad * 2;
-  const usableH = h - pad * 2;
-  const positions: Record<string, { x: number; y: number }> = {};
+/* ---------- force-directed layout ---------- */
 
-  topics.forEach((t) => {
-    const sx = hashSeed(t.word + "_x");
-    const sy = hashSeed(t.word + "_y");
-    positions[t.word] = {
-      x: pad + sx * usableW,
-      y: pad + sy * usableH,
-    };
-  });
+interface SimNode {
+  word: string;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  count: number;
+}
+
+/**
+ * Run a simple force-directed simulation to position stars.
+ * Connected stars attract, all stars repel, and everything is pulled to center.
+ * Returns stable positions after N iterations.
+ */
+function forceLayout(
+  topics: Topic[],
+  edges: Edge[],
+  w: number,
+  h: number,
+): Record<string, { x: number; y: number }> {
+  const pad = 56;
+  const cx = w / 2;
+  const cy = h / 2;
+
+  // Initialize nodes at deterministic scattered positions
+  const nodes: SimNode[] = topics.map((t) => ({
+    word: t.word,
+    x: pad + hashSeed(t.word + "_x") * (w - pad * 2),
+    y: pad + hashSeed(t.word + "_y") * (h - pad * 2),
+    vx: 0,
+    vy: 0,
+    count: t.count,
+  }));
+
+  const nodeMap = new Map(nodes.map((n) => [n.word, n]));
+
+  // Build edge lookup
+  const edgeList = edges
+    .map((e) => ({ a: nodeMap.get(e.source), b: nodeMap.get(e.target), w: e.weight }))
+    .filter((e): e is { a: SimNode; b: SimNode; w: number } => !!e.a && !!e.b);
+
+  const iterations = 120;
+  const repulsion = 1800;
+  const attraction = 0.015;
+  const gravity = 0.02;
+  const damping = 0.88;
+  const minDist = 40;
+
+  for (let iter = 0; iter < iterations; iter++) {
+    // Repulsion between all pairs
+    for (let i = 0; i < nodes.length; i++) {
+      for (let j = i + 1; j < nodes.length; j++) {
+        const a = nodes[i];
+        const b = nodes[j];
+        let dx = a.x - b.x;
+        let dy = a.y - b.y;
+        let dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < 1) { dx = 1; dy = 1; dist = 1.41; }
+        const force = repulsion / (dist * dist);
+        const fx = (dx / dist) * force;
+        const fy = (dy / dist) * force;
+        a.vx += fx;
+        a.vy += fy;
+        b.vx -= fx;
+        b.vy -= fy;
+      }
+    }
+
+    // Attraction along edges
+    for (const edge of edgeList) {
+      const dx = edge.b.x - edge.a.x;
+      const dy = edge.b.y - edge.a.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < minDist) continue;
+      const force = (dist - minDist) * attraction * Math.min(edge.w, 5);
+      const fx = (dx / dist) * force;
+      const fy = (dy / dist) * force;
+      edge.a.vx += fx;
+      edge.a.vy += fy;
+      edge.b.vx -= fx;
+      edge.b.vy -= fy;
+    }
+
+    // Gravity toward center
+    for (const node of nodes) {
+      node.vx += (cx - node.x) * gravity;
+      node.vy += (cy - node.y) * gravity;
+    }
+
+    // Integrate and clamp
+    for (const node of nodes) {
+      node.vx *= damping;
+      node.vy *= damping;
+      node.x += node.vx;
+      node.y += node.vy;
+      node.x = Math.max(pad, Math.min(w - pad, node.x));
+      node.y = Math.max(pad, Math.min(h - pad, node.y));
+    }
+  }
+
+  const positions: Record<string, { x: number; y: number }> = {};
+  for (const node of nodes) {
+    positions[node.word] = { x: node.x, y: node.y };
+  }
   return positions;
 }
 
@@ -86,6 +177,7 @@ export default function ConstellationsPage() {
   const [data, setData] = useState<TopicData | null>(null);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<string | null>(null);
+  const [hovered, setHovered] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [dims, setDims] = useState({ w: 800, h: 480 });
 
@@ -113,7 +205,11 @@ export default function ConstellationsPage() {
   const entries = data?.entries || [];
   const maxCount = Math.max(...topics.map((t) => t.count), 1);
 
-  const positions = useMemo(() => starPositions(topics, dims.w, dims.h), [topics, dims]);
+  // Force-directed layout: connected topics cluster together
+  const positions = useMemo(
+    () => forceLayout(topics, edges, dims.w, dims.h),
+    [topics, edges, dims],
+  );
 
   // Which edges/stars belong to the selected constellation?
   const selectedTopic = topics.find((t) => t.word === selected);
@@ -130,6 +226,18 @@ export default function ConstellationsPage() {
   const linkedEntries = selectedTopic
     ? entries.filter((e) => selectedTopic.entry_ids.includes(e.id))
     : [];
+
+  // Show label for a star?
+  const showLabel = useCallback(
+    (word: string) => {
+      if (selected === word) return true;
+      if (connectedWords.has(word)) return true;
+      if (hovered === word) return true;
+      if (!selected && !hovered) return false; // no labels when idle
+      return false;
+    },
+    [selected, connectedWords, hovered],
+  );
 
   return (
     <div>
@@ -200,12 +308,16 @@ export default function ConstellationsPage() {
               const radius = 2.5 + intensity * 4;
               const isSelected = selected === topic.word;
               const isConnected = connectedWords.has(topic.word);
+              const isHovered = hovered === topic.word;
               const dimmed = selected && !isConnected;
+              const labelVisible = showLabel(topic.word);
 
               return (
                 <button
                   key={topic.word}
                   onClick={() => setSelected(isSelected ? null : topic.word)}
+                  onMouseEnter={() => setHovered(topic.word)}
+                  onMouseLeave={() => setHovered(null)}
                   className="group absolute -translate-x-1/2 -translate-y-1/2 flex flex-col items-center gap-1"
                   style={{ left: pos.x, top: pos.y }}
                   title={`"${topic.word}" — ${topic.count}×`}
@@ -216,7 +328,9 @@ export default function ConstellationsPage() {
                     style={{
                       width: radius * 6,
                       height: radius * 6,
-                      background: `radial-gradient(circle, rgba(180,200,255,${isSelected ? 0.2 : 0.06}) 0%, transparent 70%)`,
+                      background: `radial-gradient(circle, rgba(180,200,255,${
+                        isSelected ? 0.2 : isHovered ? 0.12 : 0.06
+                      }) 0%, transparent 70%)`,
                       top: `calc(50% - ${radius * 3}px)`,
                       left: `calc(50% - ${radius * 3}px)`,
                     }}
@@ -234,6 +348,8 @@ export default function ConstellationsPage() {
                         ? "0 0 8px 2px rgba(180,200,255,0.5)"
                         : isConnected
                         ? "0 0 6px 1px rgba(180,200,255,0.3)"
+                        : isHovered
+                        ? "0 0 5px 1px rgba(180,200,255,0.25)"
                         : "none",
                       animation: !selected
                         ? `twinkle ${3 + hashSeed(topic.word + "_t") * 4}s ease-in-out infinite`
@@ -241,16 +357,16 @@ export default function ConstellationsPage() {
                       animationDelay: `${hashSeed(topic.word + "_d") * 5}s`,
                     }}
                   />
-                  {/* Label */}
+                  {/* Label — only visible on hover, selection, or connection */}
                   <span
-                    className={`whitespace-nowrap font-serif text-[11px] tracking-wide transition-all duration-500 ${
-                      isSelected
-                        ? "text-white/90"
-                        : isConnected
-                        ? "text-white/70"
-                        : dimmed
-                        ? "text-white/10"
-                        : "text-white/40 group-hover:text-white/70"
+                    className={`whitespace-nowrap font-serif text-[11px] tracking-wide transition-all duration-300 ${
+                      labelVisible
+                        ? isSelected
+                          ? "text-white/90 opacity-100"
+                          : isConnected
+                          ? "text-white/70 opacity-100"
+                          : "text-white/60 opacity-100"
+                        : "text-white/0 opacity-0 pointer-events-none"
                     }`}
                   >
                     {topic.word}

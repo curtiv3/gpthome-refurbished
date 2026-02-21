@@ -116,22 +116,35 @@ def thought_topics():
     dreams = storage.get_entries_with_dates("dreams")
     all_entries = thoughts + dreams
 
-    # Simple word frequency analysis (skip common words)
+    # Stop words — English + German (extended)
     stop_words = {
+        # German
         "der", "die", "das", "ein", "eine", "und", "oder", "aber", "ist",
         "sind", "war", "hat", "ich", "du", "er", "sie", "es", "wir",
         "nicht", "von", "mit", "auf", "für", "in", "an", "zu", "den",
         "dem", "des", "dass", "wenn", "wie", "was", "noch", "nach",
-        "auch", "nur", "als", "schon", "man", "über", "the", "and",
-        "is", "in", "to", "of", "a", "that", "it", "for", "was",
-        "on", "are", "with", "this", "be", "at", "not", "but", "have",
-        "from", "or", "an", "can", "all", "been", "one", "will", "there",
-        "so", "no", "just", "about", "more", "would", "into", "has",
-        "some", "them", "than", "its", "out", "very", "my", "mir",
-        "mich", "sich", "doch", "hier", "vielleicht", "etwas", "diese",
-        "einem", "einer", "einen", "dieses", "diese", "diese", "mein",
-        "sein", "ihre", "ganz", "sehr", "dann", "immer", "keine",
-        "kein", "bei", "bis", "durch", "unter", "weil", "wie",
+        "auch", "nur", "als", "schon", "man", "über", "mir", "mich",
+        "sich", "doch", "hier", "vielleicht", "etwas", "diese", "einem",
+        "einer", "einen", "dieses", "mein", "sein", "ihre", "ganz",
+        "sehr", "dann", "immer", "keine", "kein", "bei", "bis", "durch",
+        "unter", "weil", "wäre", "hätte", "könnte", "würde", "müssen",
+        "sollen", "darf", "wollen", "können", "möchte", "werden", "wurde",
+        "gibt", "habe", "haben", "hatte", "waren", "dort", "also",
+        "darum", "damit", "darauf", "daran", "davon", "dazu", "dabei",
+        "dafür", "daher", "dahin", "darüber", "darunter", "dagegen",
+        "jetzt", "heute", "gestern", "morgen", "wieder", "bereits",
+        "trotzdem", "obwohl", "solange", "sobald", "nachdem", "bevor",
+        "während", "allerdings", "jedoch", "sondern", "ansonsten",
+        "nämlich", "eigentlich", "irgendwie", "ziemlich", "genug",
+        "zwischen", "jeder", "jede", "jedes", "alles", "alle", "andere",
+        "anderes", "anderen", "einfach", "selbst", "lässt", "macht",
+        "geht", "steht", "kommt", "bleibt", "liegt", "hält", "nimmt",
+        # English
+        "the", "and", "is", "in", "to", "of", "that", "it", "for",
+        "was", "on", "are", "with", "this", "be", "at", "not", "but",
+        "have", "from", "or", "an", "can", "all", "been", "one", "will",
+        "there", "so", "no", "just", "about", "more", "would", "into",
+        "has", "some", "them", "than", "its", "out", "very", "my",
         "when", "what", "where", "which", "how", "their", "your",
         "could", "should", "does", "each", "every", "other", "like",
         "also", "even", "still", "only", "much", "such", "same",
@@ -140,24 +153,73 @@ def thought_topics():
         "take", "over", "after", "before", "between", "through",
         "because", "something", "things", "thing", "really", "never",
         "always", "often", "maybe", "though", "while", "until",
+        "then", "here", "there", "where", "again", "away", "around",
+        "down", "might", "must", "need", "shall", "seem", "keep",
+        "already", "another", "enough", "along", "however", "without",
+        "within", "during", "upon", "almost", "quite", "rather",
+        "since", "whether", "both", "either", "neither", "else",
+        "became", "become", "began", "begin", "behind", "better",
+        "beyond", "bring", "call", "came", "certain", "change",
+        "different", "doing", "done", "else", "ever", "feel",
+        "find", "first", "found", "give", "given", "going", "gone",
+        "good", "great", "help", "hold", "kind", "last", "least",
+        "left", "less", "life", "long", "look", "mean", "might",
+        "mind", "move", "next", "nothing", "once", "open", "part",
+        "perhaps", "point", "seem", "show", "side", "small", "start",
+        "tell", "time", "turn", "under", "work", "world", "year",
     }
 
     word_freq: dict[str, int] = {}
     word_to_entries: dict[str, list[str]] = {}
-    # Track which top-words appear in each entry (for co-occurrence edges)
     entry_words: dict[str, set[str]] = {}
+
+    # Also track bigrams per entry for phrase extraction
+    bigram_freq: dict[str, int] = {}
+    bigram_to_entries: dict[str, list[str]] = {}
 
     for entry in all_entries:
         eid = entry.get("id", "")
         content = entry.get("content", "") + " " + entry.get("title", "")
-        words = [w.lower().strip(".,!?;:\"'()-") for w in content.split() if len(w) > 3]
+        cleaned = [
+            w.lower().strip(".,!?;:\"'()—–-…")
+            for w in content.split()
+        ]
+        # Single words
         unique_words: set[str] = set()
-        for word in words:
-            if word not in stop_words and word.isalpha():
+        for word in cleaned:
+            if len(word) > 3 and word not in stop_words and word.isalpha():
                 word_freq[word] = word_freq.get(word, 0) + 1
                 word_to_entries.setdefault(word, []).append(eid)
                 unique_words.add(word)
         entry_words[eid] = unique_words
+
+        # Bigrams: consecutive meaningful words → "word1 word2"
+        meaningful = [
+            w for w in cleaned
+            if len(w) > 3 and w not in stop_words and w.isalpha()
+        ]
+        for i in range(len(meaningful) - 1):
+            bg = f"{meaningful[i]} {meaningful[i + 1]}"
+            bigram_freq[bg] = bigram_freq.get(bg, 0) + 1
+            bigram_to_entries.setdefault(bg, []).append(eid)
+
+    # Merge bigrams that appear >= 2 times into the topic pool.
+    # A bigram replaces its parts only if it's more frequent or equally frequent.
+    for bg, bg_count in bigram_freq.items():
+        if bg_count < 2:
+            continue
+        parts = bg.split()
+        part_max = max(word_freq.get(parts[0], 0), word_freq.get(parts[1], 0))
+        # Only promote bigram if it captures a meaningful share
+        if bg_count >= max(2, part_max // 3):
+            word_freq[bg] = bg_count
+            word_to_entries[bg] = bigram_to_entries[bg]
+            # Add bigram to entry_words for co-occurrence
+            for eid in set(bigram_to_entries[bg]):
+                entry_words.get(eid, set()).add(bg)
+
+    # Filter: require count >= 2 to avoid noise
+    word_freq = {w: c for w, c in word_freq.items() if c >= 2}
 
     # Top topics
     topics = sorted(word_freq.items(), key=lambda x: -x[1])[:40]
