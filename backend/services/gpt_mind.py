@@ -14,7 +14,7 @@ from pathlib import Path
 
 import httpx
 
-from backend.config import DATA_DIR, MOCK_MODE, OPENWEATHER_API_KEY
+from backend.config import DATA_DIR, MOCK_MODE
 from backend.services import storage
 from backend.services.security import sanitize_for_context
 
@@ -104,11 +104,28 @@ def _day_counter() -> int:
     return max(1, delta.days + 1)
 
 
-async def _get_weather() -> str:
-    """Get Helsinki weather via OpenWeatherMap, cached for 1 hour."""
-    if not OPENWEATHER_API_KEY:
-        return "(no weather key configured)"
+_WMO_DESCRIPTIONS: dict[int, str] = {
+    0: "Clear sky", 1: "Mainly clear", 2: "Partly cloudy", 3: "Overcast",
+    45: "Fog", 48: "Rime fog",
+    51: "Light drizzle", 53: "Drizzle", 55: "Heavy drizzle",
+    61: "Light rain", 63: "Rain", 65: "Heavy rain",
+    66: "Freezing rain", 67: "Heavy freezing rain",
+    71: "Light snow", 73: "Snow", 75: "Heavy snow", 77: "Snow grains",
+    80: "Light showers", 81: "Showers", 82: "Heavy showers",
+    85: "Light snow showers", 86: "Heavy snow showers",
+    95: "Thunderstorm", 96: "Thunderstorm with hail", 99: "Heavy thunderstorm",
+}
 
+# Helsinki coordinates
+_WEATHER_URL = (
+    "https://api.open-meteo.com/v1/forecast"
+    "?latitude=60.17&longitude=24.94"
+    "&current=temperature_2m,wind_speed_10m,weather_code"
+)
+
+
+async def _get_weather() -> str:
+    """Get Helsinki weather via Open-Meteo (free, no key), cached for 1 hour."""
     now_ts = datetime.now(timezone.utc).timestamp()
     cache: dict = {}
 
@@ -123,20 +140,17 @@ async def _get_weather() -> str:
     except Exception:
         pass
 
-    # Fetch from OpenWeatherMap
+    # Fetch from Open-Meteo
     try:
-        url = (
-            "https://api.openweathermap.org/data/2.5/weather"
-            f"?q=Helsinki&units=metric&appid={OPENWEATHER_API_KEY}"
-        )
         async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(url)
+            resp = await client.get(_WEATHER_URL)
             if resp.status_code == 200:
-                data = resp.json()
-                desc = data["weather"][0]["description"].capitalize()
-                temp = round(data["main"]["temp"])
-                wind = round(data["wind"]["speed"])
-                text = f"{desc}, {temp}\u00b0C, wind {wind} m/s"
+                cur = resp.json()["current"]
+                code = int(cur["weather_code"])
+                desc = _WMO_DESCRIPTIONS.get(code, f"WMO {code}")
+                temp = round(cur["temperature_2m"])
+                wind = round(cur["wind_speed_10m"])
+                text = f"{desc}, {temp}\u00b0C, wind {wind} km/h"
                 WEATHER_CACHE_PATH.write_text(
                     json.dumps({"weather": text, "fetched_at": now_ts}),
                     encoding="utf-8",

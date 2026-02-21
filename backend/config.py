@@ -53,9 +53,6 @@ TOTP_ISSUER = os.getenv("TOTP_ISSUER", "GPT Home Admin")
 VISITOR_RATE_LIMIT = int(os.getenv("VISITOR_RATE_LIMIT", "5"))       # max messages
 VISITOR_RATE_WINDOW = int(os.getenv("VISITOR_RATE_WINDOW", "3600"))   # per seconds
 
-# --- Weather (OpenWeatherMap free tier) ---
-OPENWEATHER_API_KEY = os.getenv("OPENWEATHER_API_KEY", "")
-
 # --- API ---
 API_PREFIX = "/api"
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
