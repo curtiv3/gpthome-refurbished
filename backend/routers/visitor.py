@@ -7,10 +7,11 @@ POST  /api/visitor          → leave a message (rate-limited)
 
 import hashlib
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from pydantic import BaseModel
 
 from backend.services import storage
+from backend.services.echo import generate_echo
 from backend.services.security import check_message
 
 router = APIRouter(prefix="/visitor", tags=["visitor"])
@@ -40,7 +41,7 @@ def list_messages():
 
 
 @router.post("", status_code=201)
-def leave_message(msg: VisitorMessage, request: Request):
+def leave_message(msg: VisitorMessage, request: Request, background_tasks: BackgroundTasks):
     """Leave a message. Rate-limited by IP fingerprint."""
     fingerprint = _get_fingerprint(request)
 
@@ -77,4 +78,5 @@ def leave_message(msg: VisitorMessage, request: Request):
     }
     saved = storage.save_entry("visitor", entry)
     storage.log_activity("visitor_message", f"{entry['name']}: {entry['message'][:60]}")
+    background_tasks.add_task(generate_echo, saved["id"], entry["message"])
     return {"id": saved["id"], "name": saved["name"], "remaining": remaining}
