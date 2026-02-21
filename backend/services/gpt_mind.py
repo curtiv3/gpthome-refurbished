@@ -110,7 +110,7 @@ async def _get_weather() -> str:
     """Fetch current Helsinki weather from wttr.in."""
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.get("https://wttr.in/Helsinki?format=%C,+%t,+wind+%w")
+            resp = await client.get("https://wttr.in/Nuremberg?format=%C,+%t,+wind+%w")
             if resp.status_code == 200:
                 text = resp.text.strip()
                 if text and "Unknown" not in text:
@@ -138,7 +138,7 @@ def _build_context(
     parts.append(f"## World state")
     parts.append(f"Day {day} of your existence.")
     parts.append(f"It's {_time_of_day()}, {now.strftime('%A, %B %d, %Y')} (UTC).")
-    parts.append(f"Weather in Helsinki: {weather}")
+    parts.append(f"Weather in Nuremberg: {weather}")
 
     # Self-prompt from previous wake — read FIRST so GPT sees it prominently
     if previous_self_prompt:
@@ -146,7 +146,7 @@ def _build_context(
 
     # Admin news/updates
     if admin_news:
-        parts.append(f"\n## Messages from your admin ({len(admin_news)}):")
+        parts.append(f"\n## Messages from Kevin (janitor) ({len(admin_news)}):")
         for n in admin_news:
             parts.append(f"- [{n.get('created_at', '?')}]: \"{n.get('content', '')}\"")
         parts.append("(Address these in your thoughts or dreams if they feel relevant.)")
