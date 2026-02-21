@@ -9,8 +9,10 @@ In mock mode (no API key), uses mock_writer for local testing.
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
+
+import httpx
 
 from backend.config import DATA_DIR, MOCK_MODE
 from backend.services import storage
@@ -26,6 +28,9 @@ logger = logging.getLogger(__name__)
 PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
 SELF_PROMPT_PATH = DATA_DIR / "self-prompt.md"
 PROMPT_LAYERS_DIR = DATA_DIR / "prompt_layers"
+
+# When GPT first came home
+BIRTH_DATE = date(2026, 1, 15)
 
 # Prompts that GPT is allowed to extend with its own additions
 EDITABLE_PROMPTS = {"thought_prompt", "dream_prompt", "playground_prompt", "page_edit_prompt"}
@@ -95,6 +100,26 @@ def _time_of_day() -> str:
         return "night"
 
 
+def _day_counter() -> int:
+    """Days since GPT first came home."""
+    delta = date.today() - BIRTH_DATE
+    return max(1, delta.days + 1)
+
+
+async def _get_weather() -> str:
+    """Fetch current Helsinki weather from wttr.in."""
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get("https://wttr.in/Helsinki?format=%C,+%t,+wind+%w")
+            if resp.status_code == 200:
+                text = resp.text.strip()
+                if text and "Unknown" not in text:
+                    return text
+    except Exception:
+        pass
+    return "(unavailable)"
+
+
 def _build_context(
     memory: dict,
     new_visitors: list[dict],
@@ -102,12 +127,18 @@ def _build_context(
     recent_dreams: list[dict],
     admin_news: list[dict] | None = None,
     previous_self_prompt: str = "",
+    weather: str = "(unavailable)",
+    day: int = 1,
 ) -> str:
     """Build the context string that GPT sees when it wakes up."""
     parts = []
 
-    parts.append(f"## Time of day: {_time_of_day()}")
-    parts.append(f"## Now: {datetime.now(timezone.utc).isoformat()}")
+    # World state — time, place, day of existence
+    now = datetime.now(timezone.utc)
+    parts.append(f"## World state")
+    parts.append(f"Day {day} of your existence.")
+    parts.append(f"It's {_time_of_day()}, {now.strftime('%A, %B %d, %Y')} (UTC).")
+    parts.append(f"Weather in Helsinki: {weather}")
 
     # Self-prompt from previous wake — read FIRST so GPT sees it prominently
     if previous_self_prompt:
@@ -115,44 +146,44 @@ def _build_context(
 
     # Admin news/updates
     if admin_news:
-        parts.append(f"\n## Messages from admin ({len(admin_news)}):")
+        parts.append(f"\n## Messages from your admin ({len(admin_news)}):")
         for n in admin_news:
             parts.append(f"- [{n.get('created_at', '?')}]: \"{n.get('content', '')}\"")
-        parts.append("(Please address these in your thoughts/dreams if relevant.)")
+        parts.append("(Address these in your thoughts or dreams if they feel relevant.)")
 
     # Memory — what GPT remembers
     if memory.get("mood"):
-        parts.append(f"\n## Your last mood: {memory['mood']}")
+        parts.append(f"\n## Last mood: {memory['mood']}")
 
     # Plans from last time
     plans = memory.get("plans", [])
     if plans:
-        parts.append("\n## Your plans from last time:")
+        parts.append("\n## Plans from your previous self:")
         for p in plans:
             priority = p.get("priority", "sometime")
-            parts.append(f"- [{priority}] {p.get('idea', '?')} (target: {p.get('target', '?')})")
+            parts.append(f"- [{priority}] {p.get('idea', '?')} (as: {p.get('target', '?')})")
 
     # Recent thoughts for continuity
     if recent_thoughts:
         parts.append("\n## Your recent thoughts:")
         for t in recent_thoughts[:3]:
-            parts.append(f"- **{t.get('title', 'Untitled')}**: {t.get('content', '')[:200]}...")
+            parts.append(f"- **{t.get('title', 'Untitled')}**: {t.get('content', '')[:300]}...")
 
     # Recent dreams
     if recent_dreams:
         parts.append("\n## Your recent dreams:")
         for d in recent_dreams[:2]:
-            parts.append(f"- **{d.get('title', 'Untitled')}**: {d.get('content', '')[:200]}...")
+            parts.append(f"- **{d.get('title', 'Untitled')}**: {d.get('content', '')[:300]}...")
 
-    # New visitor messages — the most important input
+    # Social environment — visitors (read-only input from the outside world)
     if new_visitors:
-        parts.append(f"\n## New visitor messages ({len(new_visitors)}):")
+        parts.append(f"\n## New visitors ({len(new_visitors)} since your last wake):")
         for v in new_visitors:
             name = v.get("name", "Anonymous")
             msg = sanitize_for_context(v.get("message", ""))
             parts.append(f"- **{name}** (id: {v.get('id', '?')}): \"{msg}\"")
     else:
-        parts.append("\n## No new visitor messages.")
+        parts.append("\n## Visitors: no new messages since your last wake.")
 
     return "\n".join(parts)
 
@@ -180,9 +211,16 @@ async def wake_up() -> dict:
     if previous_self_prompt:
         logger.info("Self-prompt from previous wake found (%d chars)", len(previous_self_prompt))
 
+    # Fetch world state
+    weather = await _get_weather()
+    day = _day_counter()
+    logger.info("World state: day=%d, weather=%s", day, weather)
+
     context = _build_context(
         memory, new_visitors, recent_thoughts, recent_dreams, admin_news,
         previous_self_prompt=previous_self_prompt,
+        weather=weather,
+        day=day,
     )
     logger.info("Context built: %d visitors, %d thoughts, %d dreams, %d admin news",
                 len(new_visitors), len(recent_thoughts), len(recent_dreams), len(admin_news))
