@@ -1,7 +1,13 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { postVisitorMessage, fetchEntries } from "@/lib/api";
+import { postVisitorMessage, fetchEntries, fetchEchoes } from "@/lib/api";
+
+interface EchoFragment {
+  id: string;
+  content: string;
+  created_at: string;
+}
 
 export default function VisitorPage() {
   const [name, setName] = useState("");
@@ -10,12 +16,17 @@ export default function VisitorPage() {
   const [sent, setSent] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [count, setCount] = useState<number | null>(null);
+  const [echoes, setEchoes] = useState<EchoFragment[]>([]);
 
   useEffect(() => {
     fetchEntries("visitor")
       .then((data) => {
         if (data && typeof data.count === "number") setCount(data.count);
       })
+      .catch(() => {});
+
+    fetchEchoes(12)
+      .then((data) => setEchoes(data.echoes))
       .catch(() => {});
   }, []);
 
@@ -103,6 +114,25 @@ export default function VisitorPage() {
             {sending ? "Sending..." : "Leave message"}
           </button>
         </form>
+      )}
+
+      {echoes.length > 0 && (
+        <div className="mt-12">
+          <h2 className="font-serif text-lg tracking-tight text-white/70">Echoes</h2>
+          <p className="mt-1 text-xs text-white/30">
+            Fragments of what others left behind — anonymized, poeticized, set adrift.
+          </p>
+          <ul className="mt-5 space-y-3">
+            {echoes.map((echo) => (
+              <li
+                key={echo.id}
+                className="rounded-xl border border-white/5 bg-white/3 px-4 py-3 text-sm italic text-white/50"
+              >
+                &ldquo;{echo.content}&rdquo;
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
     </div>
   );

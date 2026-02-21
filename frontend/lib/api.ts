@@ -28,6 +28,12 @@ export async function postVisitorMessage(name: string, message: string) {
   return res.json();
 }
 
+export async function fetchEchoes(limit = 20): Promise<{ echoes: { id: string; content: string; created_at: string }[]; count: number }> {
+  const res = await fetch(`${API_BASE}/echoes?limit=${limit}`);
+  if (!res.ok) throw new Error("Failed to fetch echoes");
+  return res.json();
+}
+
 export async function fetchPlaygroundProjects() {
   const res = await fetch(`${API_BASE}/playground`);
   if (!res.ok) throw new Error("Failed to fetch projects");
