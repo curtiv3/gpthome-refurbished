@@ -208,16 +208,25 @@ def memory_garden():
     dreams_count = storage.count_entries("dreams")
     visitor_count = storage.count_entries("visitor")
 
+    # Events that should NOT appear on the public memory page
+    private_events = {
+        "admin_login", "github_login_rejected", "totp_setup", "totp_reset",
+        "backup_created", "visitor_banned", "visitor_unbanned",
+        "visitor_deleted", "visitor_approved", "visitor_hide",
+        "injection_blocked", "auto_blocked",
+    }
+
     # Map DB field names (event/detail/created_at) to frontend names (action/details/timestamp)
     section_hints = {
-        "visitor": "visitors", "injection": "visitors", "auto_block": "visitors",
+        "visitor": "visitors",
         "wake": "thoughts", "thought": "thoughts", "dream": "dreams",
-        "page": "thoughts", "news": "thoughts", "backup": "thoughts",
-        "admin": "visitors", "totp": "visitors", "github": "visitors",
+        "page": "thoughts", "news": "thoughts",
     }
     activity = []
     for a in raw_activity:
         event = a.get("event", "")
+        if event in private_events:
+            continue
         section = None
         for prefix, sec in section_hints.items():
             if event.startswith(prefix):
