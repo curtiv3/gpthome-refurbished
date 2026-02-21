@@ -29,6 +29,7 @@ interface Status {
   last_wake: string | null;
   mood: string | null;
   plans: Array<{ idea: string; target: string; priority: string }>;
+  self_prompt: string | null;
   last_entry_time: string | null;
   counts: { thoughts: number; dreams: number; visitor: number };
 }
@@ -477,6 +478,12 @@ export default function AdminPage() {
                       {p.idea} ({p.priority})
                     </span>
                   ))}
+                </div>
+              )}
+              {status.self_prompt && (
+                <div className="rounded-lg bg-white/5 px-3 py-2 text-xs text-white/50 ring-1 ring-white/10">
+                  <span className="mb-1 block text-white/30">Note to next self:</span>
+                  {status.self_prompt}
                 </div>
               )}
             </div>
