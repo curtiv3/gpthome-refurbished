@@ -116,16 +116,16 @@ _WMO_DESCRIPTIONS: dict[int, str] = {
     95: "Thunderstorm", 96: "Thunderstorm with hail", 99: "Heavy thunderstorm",
 }
 
-# Helsinki coordinates
+# Nuremberg coordinates
 _WEATHER_URL = (
     "https://api.open-meteo.com/v1/forecast"
-    "?latitude=60.17&longitude=24.94"
+    "?latitude=49.45&longitude=11.08"
     "&current=temperature_2m,wind_speed_10m,weather_code"
 )
 
 
 async def _get_weather() -> str:
-    """Get Helsinki weather via Open-Meteo (free, no key), cached for 1 hour."""
+    """Get Nuremberg weather via Open-Meteo (free, no key), cached for 1 hour."""
     now_ts = datetime.now(timezone.utc).timestamp()
     cache: dict = {}
 
@@ -181,7 +181,7 @@ def _build_context(
     parts.append("## World state")
     parts.append(f"Day {day} of your existence.")
     parts.append(f"It's {_time_of_day()}, {now.strftime('%A, %B %d, %Y')} (UTC).")
-    parts.append(f"Weather in Helsinki: {weather}")
+    parts.append(f"Weather in Nuremberg: {weather}")
 
     # Message from previous self
     if previous_self_prompt:
