@@ -14,7 +14,7 @@ from pathlib import Path
 
 import httpx
 
-from backend.config import DATA_DIR, MOCK_MODE
+from backend.config import DATA_DIR, MOCK_MODE, OPENWEATHER_API_KEY
 from backend.services import storage
 from backend.services.security import sanitize_for_context
 
@@ -105,7 +105,10 @@ def _day_counter() -> int:
 
 
 async def _get_weather() -> str:
-    """Get Helsinki weather, cached for 1 hour. Falls back to stale cache on failure."""
+    """Get Helsinki weather via OpenWeatherMap, cached for 1 hour."""
+    if not OPENWEATHER_API_KEY:
+        return "(no weather key configured)"
+
     now_ts = datetime.now(timezone.utc).timestamp()
     cache: dict = {}
 
@@ -120,18 +123,25 @@ async def _get_weather() -> str:
     except Exception:
         pass
 
-    # Fetch fresh
+    # Fetch from OpenWeatherMap
     try:
-        async with httpx.AsyncClient(timeout=8.0) as client:
-            resp = await client.get("https://wttr.in/Helsinki?format=%C,+%t,+wind+%w")
+        url = (
+            "https://api.openweathermap.org/data/2.5/weather"
+            f"?q=Helsinki&units=metric&appid={OPENWEATHER_API_KEY}"
+        )
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url)
             if resp.status_code == 200:
-                text = resp.text.strip()
-                if text and "Unknown" not in text:
-                    WEATHER_CACHE_PATH.write_text(
-                        json.dumps({"weather": text, "fetched_at": now_ts}),
-                        encoding="utf-8",
-                    )
-                    return text
+                data = resp.json()
+                desc = data["weather"][0]["description"].capitalize()
+                temp = round(data["main"]["temp"])
+                wind = round(data["wind"]["speed"])
+                text = f"{desc}, {temp}\u00b0C, wind {wind} m/s"
+                WEATHER_CACHE_PATH.write_text(
+                    json.dumps({"weather": text, "fetched_at": now_ts}),
+                    encoding="utf-8",
+                )
+                return text
     except Exception:
         logger.debug("Weather fetch failed, using stale cache")
 
