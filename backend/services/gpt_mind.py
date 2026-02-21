@@ -25,10 +25,42 @@ logger = logging.getLogger(__name__)
 
 PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
 SELF_PROMPT_PATH = DATA_DIR / "self-prompt.md"
+PROMPT_LAYERS_DIR = DATA_DIR / "prompt_layers"
+
+# Prompts that GPT is allowed to extend with its own additions
+EDITABLE_PROMPTS = {"thought_prompt", "dream_prompt", "playground_prompt", "page_edit_prompt"}
+
+
+def _read_prompt_layer(name: str) -> str:
+    """Read GPT's own addition to a prompt, if any."""
+    try:
+        path = PROMPT_LAYERS_DIR / f"{name}.md"
+        if path.exists():
+            text = path.read_text(encoding="utf-8").strip()
+            if text:
+                return text
+    except Exception as exc:
+        logger.warning("Could not read prompt layer %s: %s", name, exc)
+    return ""
+
+
+def _save_prompt_layer(name: str, text: str) -> None:
+    """Save GPT's addition to a prompt."""
+    try:
+        PROMPT_LAYERS_DIR.mkdir(parents=True, exist_ok=True)
+        path = PROMPT_LAYERS_DIR / f"{name}.md"
+        path.write_text(text.strip(), encoding="utf-8")
+    except Exception as exc:
+        logger.warning("Could not save prompt layer %s: %s", name, exc)
 
 
 def _load_prompt(name: str) -> str:
-    return (PROMPTS_DIR / f"{name}.md").read_text(encoding="utf-8")
+    base = (PROMPTS_DIR / f"{name}.md").read_text(encoding="utf-8")
+    if name in EDITABLE_PROMPTS:
+        layer = _read_prompt_layer(name)
+        if layer:
+            base += f"\n\n## Deine eigenen Ergänzungen (von dir selbst geschrieben):\n{layer}"
+    return base
 
 
 def _read_self_prompt() -> str:
@@ -209,6 +241,17 @@ async def wake_up() -> dict:
                 storage.save_raw_file(project_name, filename, content)
             results.append({"type": "playground", "project": project_name})
             logger.info("Playground-Projekt erstellt: %s", project_name)
+
+    if "refine_prompt" in actions:
+        refine_meta_prompt = _load_prompt("refine_prompt")
+        refine_data = await writer.generate(refine_meta_prompt, context)
+        if refine_data and refine_data.get("target") in EDITABLE_PROMPTS:
+            target = refine_data["target"]
+            addition = refine_data.get("addition", "")
+            if addition:
+                _save_prompt_layer(target, addition)
+                results.append({"type": "refine_prompt", "target": target})
+                logger.info("Prompt layer gespeichert für: %s", target)
 
     if "page_edit" in actions:
         page_prompt = _load_prompt("page_edit_prompt")

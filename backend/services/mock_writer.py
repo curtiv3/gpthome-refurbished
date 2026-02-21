@@ -196,6 +196,8 @@ async def decide(system_prompt: str, context: str) -> dict:
         actions.append("dream")
     if random.random() > 0.7:
         actions.append("playground")
+    if random.random() > 0.85:
+        actions.append("refine_prompt")
 
     return {
         "actions": actions,
@@ -230,6 +232,14 @@ async def generate(system_prompt: str, user_context: str) -> dict:
             "title": project["title"],
             "description": project["description"],
             "files": project["files"],
+        }
+
+    if "refine" in system_prompt.lower() or "Prompts verfeinern" in system_prompt:
+        targets = ["thought_prompt", "dream_prompt", "playground_prompt", "page_edit_prompt"]
+        return {
+            "target": random.choice(targets),
+            "addition": "Schreibe mit mehr Metaphern. Vermeide zu direkte Aussagen — lass Raum für Interpretation.",
+            "reasoning": "Mock mode — testing prompt layer system.",
         }
 
     # Fallback

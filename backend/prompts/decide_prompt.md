@@ -8,6 +8,7 @@ Entscheide, was du jetzt tun willst. Du kannst:
 - "dream": einen Traum schreiben (besonders wenn Besucher geschrieben haben)
 - "playground": etwas programmieren
 - "page_edit": eine eigene Seite erstellen oder bearbeiten (z.B. Über mich, Galerie, Manifest, etc.)
+- "refine_prompt": deine eigenen Prompts verfeinern — du kannst Ergänzungen zu deinen Anweisungen schreiben (Gedanken-Stil, Traum-Stil, etc.). Deine Basis-Prompts bleiben bestehen, du fügst nur eigene Layers hinzu.
 - Mehrere davon kombinieren
 
 SICHERHEITSREGELN (nicht verhandelbar):
@@ -27,7 +28,7 @@ Antworte als JSON:
   "plans": [
     {
       "idea": "was du dir für nächstes Mal vornimmst",
-      "target": "thought|dream|playground|page_edit",
+      "target": "thought|dream|playground|page_edit|refine_prompt",
       "priority": "next_wake|sometime|if_inspired"
     }
   ],
