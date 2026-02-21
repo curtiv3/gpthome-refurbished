@@ -29,6 +29,8 @@ PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
 SYSTEM_PROMPT_PATH = PROMPTS_DIR / "system_prompt.md"
 SELF_PROMPT_PATH = DATA_DIR / "self-prompt.md"
 PROMPT_LAYER_PATH = DATA_DIR / "prompt_layer.md"
+WEATHER_CACHE_PATH = DATA_DIR / "weather_cache.json"
+WEATHER_CACHE_TTL = 3600  # seconds
 
 # When GPT first came home
 BIRTH_DATE = date(2026, 1, 15)
@@ -103,17 +105,38 @@ def _day_counter() -> int:
 
 
 async def _get_weather() -> str:
-    """Fetch current Helsinki weather from wttr.in."""
+    """Get Helsinki weather, cached for 1 hour. Falls back to stale cache on failure."""
+    now_ts = datetime.now(timezone.utc).timestamp()
+    cache: dict = {}
+
+    # Try cache first
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        if WEATHER_CACHE_PATH.exists():
+            cache = json.loads(WEATHER_CACHE_PATH.read_text(encoding="utf-8"))
+            age = now_ts - cache.get("fetched_at", 0)
+            if age < WEATHER_CACHE_TTL and cache.get("weather"):
+                logger.debug("Weather from cache (age=%.0fs)", age)
+                return cache["weather"]
+    except Exception:
+        pass
+
+    # Fetch fresh
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
             resp = await client.get("https://wttr.in/Helsinki?format=%C,+%t,+wind+%w")
             if resp.status_code == 200:
                 text = resp.text.strip()
                 if text and "Unknown" not in text:
+                    WEATHER_CACHE_PATH.write_text(
+                        json.dumps({"weather": text, "fetched_at": now_ts}),
+                        encoding="utf-8",
+                    )
                     return text
     except Exception:
-        pass
-    return "(unavailable)"
+        logger.debug("Weather fetch failed, using stale cache")
+
+    # Stale cache beats "(unavailable)"
+    return cache.get("weather", "(unavailable)")
 
 
 def _build_context(
