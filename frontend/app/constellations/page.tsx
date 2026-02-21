@@ -1,36 +1,43 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
+import Link from "next/link";
 import { fetchThoughtTopics } from "@/lib/api";
+
+/* ---------- types ---------- */
 
 interface Topic {
   word: string;
   count: number;
-  thought_ids: string[];
+  entry_ids: string[];
 }
 
-interface ThoughtPreview {
+interface Edge {
+  source: string;
+  target: string;
+  weight: number;
+}
+
+interface EntryPreview {
   id: string;
   title: string;
   mood?: string;
+  section?: string;
   created_at: string;
   preview: string;
 }
 
 interface TopicData {
   topics: Topic[];
-  thoughts: ThoughtPreview[];
+  edges: Edge[];
+  entries: EntryPreview[];
 }
 
+/* ---------- helpers ---------- */
+
 const MOOD_HUES: Record<string, number> = {
-  reflective: 220,
-  curious: 190,
-  calm: 150,
-  melancholy: 240,
-  hopeful: 40,
-  playful: 330,
-  anxious: 25,
-  dreamy: 270,
+  reflective: 220, curious: 190, calm: 150, melancholy: 240,
+  hopeful: 40, playful: 330, anxious: 25, dreamy: 270,
 };
 
 function moodHue(mood?: string): number {
@@ -40,19 +47,47 @@ function moodHue(mood?: string): number {
 
 function formatDate(iso: string): string {
   try {
-    return new Date(iso).toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric",
-    });
+    return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
   } catch {
     return iso;
   }
 }
 
+/** Deterministic pseudo-random from a string (simple hash). */
+function hashSeed(str: string): number {
+  let h = 0;
+  for (let i = 0; i < str.length; i++) {
+    h = (h * 31 + str.charCodeAt(i)) | 0;
+  }
+  return (h >>> 0) / 0xffffffff; // 0..1
+}
+
+/** Return stable {x,y} for each topic word, scattered in a rectangle. */
+function starPositions(topics: Topic[], w: number, h: number) {
+  const pad = 48;
+  const usableW = w - pad * 2;
+  const usableH = h - pad * 2;
+  const positions: Record<string, { x: number; y: number }> = {};
+
+  topics.forEach((t) => {
+    const sx = hashSeed(t.word + "_x");
+    const sy = hashSeed(t.word + "_y");
+    positions[t.word] = {
+      x: pad + sx * usableW,
+      y: pad + sy * usableH,
+    };
+  });
+  return positions;
+}
+
+/* ---------- component ---------- */
+
 export default function ConstellationsPage() {
   const [data, setData] = useState<TopicData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [selectedTopic, setSelectedTopic] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [dims, setDims] = useState({ w: 800, h: 480 });
 
   useEffect(() => {
     fetchThoughtTopics()
@@ -61,88 +96,192 @@ export default function ConstellationsPage() {
       .finally(() => setLoading(false));
   }, []);
 
+  // Observe container size
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([entry]) => {
+      const { width, height } = entry.contentRect;
+      if (width > 0 && height > 0) setDims({ w: width, h: height });
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [loading]);
+
   const topics = data?.topics || [];
-  const thoughts = data?.thoughts || [];
+  const edges = data?.edges || [];
+  const entries = data?.entries || [];
   const maxCount = Math.max(...topics.map((t) => t.count), 1);
 
-  // Find thoughts linked to the selected topic
-  const selectedTopicData = topics.find((t) => t.word === selectedTopic);
-  const linkedThoughts = selectedTopicData
-    ? thoughts.filter((th) => selectedTopicData.thought_ids.includes(th.id))
+  const positions = useMemo(() => starPositions(topics, dims.w, dims.h), [topics, dims]);
+
+  // Which edges/stars belong to the selected constellation?
+  const selectedTopic = topics.find((t) => t.word === selected);
+  const connectedWords = useMemo(() => {
+    if (!selected) return new Set<string>();
+    const s = new Set<string>([selected]);
+    edges.forEach((e) => {
+      if (e.source === selected) s.add(e.target);
+      if (e.target === selected) s.add(e.source);
+    });
+    return s;
+  }, [selected, edges]);
+
+  const linkedEntries = selectedTopic
+    ? entries.filter((e) => selectedTopic.entry_ids.includes(e.id))
     : [];
 
   return (
     <div>
       <h1 className="font-serif text-3xl tracking-tight">Thought Constellations</h1>
       <p className="mt-2 text-sm text-white/60">
-        Recurring themes and words that form patterns across GPT&apos;s thoughts -- tap a star to see connected entries.
+        Recurring themes across GPT&apos;s thoughts and dreams — tap a star to reveal its constellation.
       </p>
 
       {loading && <p className="mt-8 text-sm text-white/40">Mapping constellations...</p>}
 
       {!loading && !data && (
         <p className="mt-8 text-sm text-white/40">
-          No thought data available yet. The night sky is still dark.
+          No data available yet. The night sky is still dark.
         </p>
       )}
 
       {!loading && data && (
         <>
-          {/* Star field of topics */}
-          <div className="relative mt-8 flex min-h-[280px] flex-wrap items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/[0.02] p-6">
+          {/* Keyframes */}
+          <style>{`
+            @keyframes twinkle {
+              0%, 100% { opacity: 0.55; }
+              50%      { opacity: 1; }
+            }
+          `}</style>
+
+          {/* Sky */}
+          <div
+            ref={containerRef}
+            className="relative mt-8 overflow-hidden rounded-2xl border border-white/10 bg-[radial-gradient(ellipse_at_center,rgba(30,30,80,0.25),transparent_70%)]"
+            style={{ minHeight: 480 }}
+          >
+            {/* SVG edges */}
+            <svg
+              className="pointer-events-none absolute inset-0"
+              width={dims.w}
+              height={dims.h}
+              viewBox={`0 0 ${dims.w} ${dims.h}`}
+            >
+              {edges.map((edge) => {
+                const a = positions[edge.source];
+                const b = positions[edge.target];
+                if (!a || !b) return null;
+                const active =
+                  selected && (connectedWords.has(edge.source) && connectedWords.has(edge.target));
+                const dimmed = selected && !active;
+                return (
+                  <line
+                    key={`${edge.source}-${edge.target}`}
+                    x1={a.x}
+                    y1={a.y}
+                    x2={b.x}
+                    y2={b.y}
+                    stroke="white"
+                    strokeWidth={active ? 1.2 : 0.5}
+                    strokeOpacity={dimmed ? 0.03 : active ? 0.25 : 0.07}
+                    className="transition-all duration-500"
+                  />
+                );
+              })}
+            </svg>
+
+            {/* Stars */}
             {topics.map((topic) => {
+              const pos = positions[topic.word];
+              if (!pos) return null;
               const intensity = topic.count / maxCount;
-              const size = 14 + intensity * 22;
-              const opacity = 0.4 + intensity * 0.6;
-              const isActive = selectedTopic === topic.word;
+              const radius = 2.5 + intensity * 4;
+              const isSelected = selected === topic.word;
+              const isConnected = connectedWords.has(topic.word);
+              const dimmed = selected && !isConnected;
 
               return (
                 <button
                   key={topic.word}
-                  onClick={() =>
-                    setSelectedTopic(isActive ? null : topic.word)
-                  }
-                  className={`relative rounded-full border px-3 py-1.5 transition-all ${
-                    isActive
-                      ? "border-white/30 bg-white/10 ring-2 ring-white/20 scale-110"
-                      : "border-white/10 bg-white/5 hover:border-white/20 hover:bg-white/10"
-                  }`}
-                  style={{ fontSize: size }}
-                  title={`"${topic.word}" appears ${topic.count} times`}
+                  onClick={() => setSelected(isSelected ? null : topic.word)}
+                  className="group absolute -translate-x-1/2 -translate-y-1/2 flex flex-col items-center gap-1"
+                  style={{ left: pos.x, top: pos.y }}
+                  title={`"${topic.word}" — ${topic.count}×`}
                 >
+                  {/* Glow */}
                   <span
-                    className="font-serif tracking-tight"
-                    style={{ opacity }}
+                    className="absolute rounded-full transition-all duration-500"
+                    style={{
+                      width: radius * 6,
+                      height: radius * 6,
+                      background: `radial-gradient(circle, rgba(180,200,255,${isSelected ? 0.2 : 0.06}) 0%, transparent 70%)`,
+                      top: `calc(50% - ${radius * 3}px)`,
+                      left: `calc(50% - ${radius * 3}px)`,
+                    }}
+                  />
+                  {/* Dot */}
+                  <span
+                    className="relative rounded-full transition-all duration-500"
+                    style={{
+                      width: radius * 2,
+                      height: radius * 2,
+                      background: isSelected
+                        ? "rgba(200,220,255,0.95)"
+                        : `rgba(200,210,240,${dimmed ? 0.15 : 0.4 + intensity * 0.55})`,
+                      boxShadow: isSelected
+                        ? "0 0 8px 2px rgba(180,200,255,0.5)"
+                        : isConnected
+                        ? "0 0 6px 1px rgba(180,200,255,0.3)"
+                        : "none",
+                      animation: !selected
+                        ? `twinkle ${3 + hashSeed(topic.word + "_t") * 4}s ease-in-out infinite`
+                        : "none",
+                      animationDelay: `${hashSeed(topic.word + "_d") * 5}s`,
+                    }}
+                  />
+                  {/* Label */}
+                  <span
+                    className={`whitespace-nowrap font-serif text-[11px] tracking-wide transition-all duration-500 ${
+                      isSelected
+                        ? "text-white/90"
+                        : isConnected
+                        ? "text-white/70"
+                        : dimmed
+                        ? "text-white/10"
+                        : "text-white/40 group-hover:text-white/70"
+                    }`}
                   >
                     {topic.word}
-                  </span>
-                  <span className="ml-1.5 text-[10px] text-white/30">
-                    {topic.count}
+                    {(isSelected || isConnected) && (
+                      <span className="ml-1 text-[9px] text-white/30">{topic.count}</span>
+                    )}
                   </span>
                 </button>
               );
             })}
 
             {topics.length === 0 && (
-              <p className="text-sm text-white/40">
+              <p className="absolute inset-0 flex items-center justify-center text-sm text-white/30">
                 No recurring themes found yet.
               </p>
             )}
           </div>
 
-          {/* Selected topic detail */}
-          {selectedTopicData && (
+          {/* Selected constellation detail */}
+          {selectedTopic && (
             <div className="mt-6">
               <div className="flex items-baseline gap-3">
                 <h2 className="font-serif text-xl tracking-tight">
-                  &ldquo;{selectedTopicData.word}&rdquo;
+                  &ldquo;{selectedTopic.word}&rdquo;
                 </h2>
                 <span className="text-xs text-white/40">
-                  {selectedTopicData.count} occurrences across{" "}
-                  {linkedThoughts.length} thoughts
+                  {selectedTopic.count} occurrences &middot; {linkedEntries.length} entries &middot;{" "}
+                  {connectedWords.size - 1} connected stars
                 </span>
                 <button
-                  onClick={() => setSelectedTopic(null)}
+                  onClick={() => setSelected(null)}
                   className="ml-auto text-xs text-white/30 hover:text-white/60"
                 >
                   close
@@ -150,38 +289,43 @@ export default function ConstellationsPage() {
               </div>
 
               <div className="mt-4 space-y-3">
-                {linkedThoughts.map((th) => {
-                  const hue = moodHue(th.mood);
+                {linkedEntries.slice(0, 12).map((entry) => {
+                  const hue = moodHue(entry.mood);
+                  const isThought = entry.section === "thoughts";
                   return (
-                    <div
-                      key={th.id}
-                      className="rounded-2xl border border-white/10 bg-white/5 p-4 transition-colors hover:border-white/20"
+                    <Link
+                      key={entry.id}
+                      href={`/${entry.section || "thoughts"}/${entry.id}`}
+                      className="block rounded-2xl border border-white/10 bg-white/5 p-4 transition-colors hover:border-white/20"
                     >
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
-                          <h3 className="font-serif text-base tracking-tight">
-                            {th.title}
-                          </h3>
-                          {th.mood && (
-                            <span
-                              className="mt-1 inline-block rounded-full px-2 py-0.5 text-xs capitalize"
-                              style={{
-                                backgroundColor: `hsla(${hue}, 50%, 60%, 0.15)`,
-                                color: `hsla(${hue}, 60%, 75%, 0.9)`,
-                              }}
-                            >
-                              {th.mood}
+                          <h3 className="font-serif text-base tracking-tight">{entry.title}</h3>
+                          <div className="mt-1 flex items-center gap-2">
+                            {entry.mood && (
+                              <span
+                                className="inline-block rounded-full px-2 py-0.5 text-xs capitalize"
+                                style={{
+                                  backgroundColor: `hsla(${hue}, 50%, 60%, 0.15)`,
+                                  color: `hsla(${hue}, 60%, 75%, 0.9)`,
+                                }}
+                              >
+                                {entry.mood}
+                              </span>
+                            )}
+                            <span className="text-[10px] text-white/25 uppercase tracking-widest">
+                              {isThought ? "thought" : "dream"}
                             </span>
-                          )}
+                          </div>
                         </div>
                         <span className="shrink-0 text-xs text-white/30">
-                          {formatDate(th.created_at)}
+                          {formatDate(entry.created_at)}
                         </span>
                       </div>
                       <p className="mt-2 text-sm leading-relaxed text-white/50">
-                        {th.preview}
+                        {entry.preview}
                       </p>
-                    </div>
+                    </Link>
                   );
                 })}
               </div>
@@ -189,21 +333,23 @@ export default function ConstellationsPage() {
           )}
 
           {/* Overview stats */}
-          <div className="mt-8 grid grid-cols-2 gap-3 sm:grid-cols-3">
+          <div className="mt-8 grid grid-cols-2 gap-3 sm:grid-cols-4">
             <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-center">
               <div className="font-serif text-2xl">{topics.length}</div>
-              <div className="mt-1 text-xs text-white/40">Themes found</div>
+              <div className="mt-1 text-xs text-white/40">Stars</div>
             </div>
             <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-center">
-              <div className="font-serif text-2xl">{thoughts.length}</div>
-              <div className="mt-1 text-xs text-white/40">Total thoughts</div>
+              <div className="font-serif text-2xl">{edges.length}</div>
+              <div className="mt-1 text-xs text-white/40">Connections</div>
             </div>
-            <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-center col-span-2 sm:col-span-1">
+            <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-center">
+              <div className="font-serif text-2xl">{entries.length}</div>
+              <div className="mt-1 text-xs text-white/40">Entries</div>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-center">
               <div className="font-serif text-2xl">
                 {topics.length > 0
-                  ? Math.round(
-                      topics.reduce((s, t) => s + t.count, 0) / topics.length
-                    )
+                  ? Math.round(topics.reduce((s, t) => s + t.count, 0) / topics.length)
                   : 0}
               </div>
               <div className="mt-1 text-xs text-white/40">Avg. frequency</div>

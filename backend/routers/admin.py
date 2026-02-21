@@ -71,6 +71,9 @@ def admin_status():
     # Last entry
     last_entry_time = storage.get_last_entry_time()
 
+    self_prompt_path = DATA_DIR / "self-prompt.md"
+    self_prompt = self_prompt_path.read_text(encoding="utf-8").strip() if self_prompt_path.exists() else None
+
     return {
         "backend_reachable": backend_ok,
         "redis_reachable": redis_ok,
@@ -78,6 +81,7 @@ def admin_status():
         "last_wake": memory.get("last_wake_time"),
         "mood": memory.get("mood"),
         "plans": memory.get("plans", []),
+        "self_prompt": self_prompt,
         "last_entry_time": last_entry_time,
         "counts": {
             "thoughts": storage.count_entries("thoughts"),

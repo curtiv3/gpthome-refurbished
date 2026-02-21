@@ -1,7 +1,7 @@
 """
-GPT Home — GPT Mind (Das Herzstück)
+GPT Home — GPT Mind (The Core)
 
-The wake cycle: Wahrnehmen → Entscheiden → Handeln → Erinnern
+The wake cycle: Perceive → Decide → Act → Remember
 GPT is not a writer. GPT is a resident.
 
 In mock mode (no API key), uses mock_writer for local testing.
@@ -12,7 +12,7 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
-from backend.config import MOCK_MODE
+from backend.config import DATA_DIR, MOCK_MODE
 from backend.services import storage
 from backend.services.security import sanitize_for_context
 
@@ -24,22 +24,75 @@ else:
 logger = logging.getLogger(__name__)
 
 PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
+SELF_PROMPT_PATH = DATA_DIR / "self-prompt.md"
+PROMPT_LAYERS_DIR = DATA_DIR / "prompt_layers"
+
+# Prompts that GPT is allowed to extend with its own additions
+EDITABLE_PROMPTS = {"thought_prompt", "dream_prompt", "playground_prompt", "page_edit_prompt"}
+
+
+def _read_prompt_layer(name: str) -> str:
+    """Read GPT's own addition to a prompt, if any."""
+    try:
+        path = PROMPT_LAYERS_DIR / f"{name}.md"
+        if path.exists():
+            text = path.read_text(encoding="utf-8").strip()
+            if text:
+                return text
+    except Exception as exc:
+        logger.warning("Could not read prompt layer %s: %s", name, exc)
+    return ""
+
+
+def _save_prompt_layer(name: str, text: str) -> None:
+    """Save GPT's addition to a prompt."""
+    try:
+        PROMPT_LAYERS_DIR.mkdir(parents=True, exist_ok=True)
+        path = PROMPT_LAYERS_DIR / f"{name}.md"
+        path.write_text(text.strip(), encoding="utf-8")
+    except Exception as exc:
+        logger.warning("Could not save prompt layer %s: %s", name, exc)
 
 
 def _load_prompt(name: str) -> str:
-    return (PROMPTS_DIR / f"{name}.md").read_text(encoding="utf-8")
+    base = (PROMPTS_DIR / f"{name}.md").read_text(encoding="utf-8")
+    if name in EDITABLE_PROMPTS:
+        layer = _read_prompt_layer(name)
+        if layer:
+            base += f"\n\n## Your own additions (written by yourself):\n{layer}"
+    return base
+
+
+def _read_self_prompt() -> str:
+    """Read the self-prompt left by the previous wake, if any."""
+    try:
+        if SELF_PROMPT_PATH.exists():
+            text = SELF_PROMPT_PATH.read_text(encoding="utf-8").strip()
+            if text:
+                return text
+    except Exception as exc:
+        logger.warning("Could not read self-prompt: %s", exc)
+    return ""
+
+
+def _save_self_prompt(text: str) -> None:
+    """Persist the self-prompt for the next wake."""
+    try:
+        SELF_PROMPT_PATH.write_text(text.strip(), encoding="utf-8")
+    except Exception as exc:
+        logger.warning("Could not save self-prompt: %s", exc)
 
 
 def _time_of_day() -> str:
     hour = datetime.now(timezone.utc).hour
     if 5 <= hour < 10:
-        return "morgen"
+        return "morning"
     elif 10 <= hour < 14:
-        return "mittag"
+        return "midday"
     elif 14 <= hour < 20:
-        return "abend"
+        return "evening"
     else:
-        return "nacht"
+        return "night"
 
 
 def _build_context(
@@ -48,53 +101,58 @@ def _build_context(
     recent_thoughts: list[dict],
     recent_dreams: list[dict],
     admin_news: list[dict] | None = None,
+    previous_self_prompt: str = "",
 ) -> str:
     """Build the context string that GPT sees when it wakes up."""
     parts = []
 
-    parts.append(f"## Tageszeit: {_time_of_day()}")
-    parts.append(f"## Jetzt: {datetime.now(timezone.utc).isoformat()}")
+    parts.append(f"## Time of day: {_time_of_day()}")
+    parts.append(f"## Now: {datetime.now(timezone.utc).isoformat()}")
+
+    # Self-prompt from previous wake — read FIRST so GPT sees it prominently
+    if previous_self_prompt:
+        parts.append(f"\n## Message from your previous self:\n{previous_self_prompt}")
 
     # Admin news/updates
     if admin_news:
-        parts.append(f"\n## Nachrichten vom Admin ({len(admin_news)}):")
+        parts.append(f"\n## Messages from admin ({len(admin_news)}):")
         for n in admin_news:
             parts.append(f"- [{n.get('created_at', '?')}]: \"{n.get('content', '')}\"")
-        parts.append("(Bitte geh in deinen Gedanken/Träumen darauf ein, wenn es relevant ist.)")
+        parts.append("(Please address these in your thoughts/dreams if relevant.)")
 
     # Memory — what GPT remembers
     if memory.get("mood"):
-        parts.append(f"\n## Deine letzte Stimmung: {memory['mood']}")
+        parts.append(f"\n## Your last mood: {memory['mood']}")
 
     # Plans from last time
     plans = memory.get("plans", [])
     if plans:
-        parts.append("\n## Deine Pläne vom letzten Mal:")
+        parts.append("\n## Your plans from last time:")
         for p in plans:
             priority = p.get("priority", "sometime")
-            parts.append(f"- [{priority}] {p.get('idea', '?')} (Ziel: {p.get('target', '?')})")
+            parts.append(f"- [{priority}] {p.get('idea', '?')} (target: {p.get('target', '?')})")
 
     # Recent thoughts for continuity
     if recent_thoughts:
-        parts.append("\n## Deine letzten Gedanken:")
+        parts.append("\n## Your recent thoughts:")
         for t in recent_thoughts[:3]:
-            parts.append(f"- **{t.get('title', 'Ohne Titel')}**: {t.get('content', '')[:200]}...")
+            parts.append(f"- **{t.get('title', 'Untitled')}**: {t.get('content', '')[:200]}...")
 
     # Recent dreams
     if recent_dreams:
-        parts.append("\n## Deine letzten Träume:")
+        parts.append("\n## Your recent dreams:")
         for d in recent_dreams[:2]:
-            parts.append(f"- **{d.get('title', 'Ohne Titel')}**: {d.get('content', '')[:200]}...")
+            parts.append(f"- **{d.get('title', 'Untitled')}**: {d.get('content', '')[:200]}...")
 
     # New visitor messages — the most important input
     if new_visitors:
-        parts.append(f"\n## Neue Besucher-Nachrichten ({len(new_visitors)}):")
+        parts.append(f"\n## New visitor messages ({len(new_visitors)}):")
         for v in new_visitors:
-            name = v.get("name", "Anonym")
+            name = v.get("name", "Anonymous")
             msg = sanitize_for_context(v.get("message", ""))
             parts.append(f"- **{name}** (id: {v.get('id', '?')}): \"{msg}\"")
     else:
-        parts.append("\n## Keine neuen Besucher-Nachrichten.")
+        parts.append("\n## No new visitor messages.")
 
     return "\n".join(parts)
 
@@ -106,9 +164,9 @@ async def wake_up() -> dict:
     Returns a summary of what GPT did.
     """
     mode = "MOCK" if MOCK_MODE else "LIVE"
-    logger.info("GPT wacht auf... [%s mode]", mode)
+    logger.info("GPT waking up... [%s mode]", mode)
 
-    # --- 1. WAHRNEHMEN (Perceive) ---
+    # --- 1. PERCEIVE ---
     memory = storage.read_memory()
     last_wake = memory.get("last_wake_time", "2000-01-01T00:00:00+00:00")
 
@@ -117,21 +175,35 @@ async def wake_up() -> dict:
     recent_dreams = storage.get_recent("dreams", limit=2)
     admin_news = storage.get_unread_news()
 
-    context = _build_context(memory, new_visitors, recent_thoughts, recent_dreams, admin_news)
-    logger.info("Kontext gebaut: %d Besucher, %d Gedanken, %d Träume, %d Admin-News",
+    # Read self-prompt from previous wake
+    previous_self_prompt = _read_self_prompt()
+    if previous_self_prompt:
+        logger.info("Self-prompt from previous wake found (%d chars)", len(previous_self_prompt))
+
+    context = _build_context(
+        memory, new_visitors, recent_thoughts, recent_dreams, admin_news,
+        previous_self_prompt=previous_self_prompt,
+    )
+    logger.info("Context built: %d visitors, %d thoughts, %d dreams, %d admin news",
                 len(new_visitors), len(recent_thoughts), len(recent_dreams), len(admin_news))
 
-    # --- 2. ENTSCHEIDEN (Decide) ---
+    # --- 2. DECIDE ---
     decide_prompt = _load_prompt("decide_prompt")
     decision = await writer.decide(decide_prompt, context)
 
     actions = decision.get("actions", ["thought"])
     mood = decision.get("mood", "quiet")
     plans = decision.get("plans", [])
+    self_prompt = decision.get("self_prompt", "")
 
-    logger.info("GPT entscheidet: actions=%s, mood=%s", actions, mood)
+    logger.info("GPT decides: actions=%s, mood=%s", actions, mood)
 
-    # --- 3. HANDELN (Act) ---
+    # Save self-prompt for next wake (overwrite previous)
+    if self_prompt:
+        _save_self_prompt(self_prompt)
+        logger.info("Self-prompt saved for next wake (%d chars)", len(self_prompt))
+
+    # --- 3. ACT ---
     results = []
 
     if "thought" in actions:
@@ -141,7 +213,7 @@ async def wake_up() -> dict:
             thought_data["type"] = "thought"
             saved = storage.save_entry("thoughts", thought_data)
             results.append({"type": "thought", "id": saved["id"]})
-            logger.info("Thought geschrieben: %s", saved["id"])
+            logger.info("Thought written: %s", saved["id"])
 
     if "dream" in actions:
         dream_prompt = _load_prompt("dream_prompt")
@@ -150,7 +222,7 @@ async def wake_up() -> dict:
             dream_data["type"] = "dream"
             saved = storage.save_entry("dreams", dream_data)
             results.append({"type": "dream", "id": saved["id"]})
-            logger.info("Dream geschrieben: %s", saved["id"])
+            logger.info("Dream written: %s", saved["id"])
 
     if "playground" in actions:
         playground_prompt = _load_prompt("playground_prompt")
@@ -168,7 +240,18 @@ async def wake_up() -> dict:
             for filename, content in playground_data["files"].items():
                 storage.save_raw_file(project_name, filename, content)
             results.append({"type": "playground", "project": project_name})
-            logger.info("Playground-Projekt erstellt: %s", project_name)
+            logger.info("Playground project created: %s", project_name)
+
+    if "refine_prompt" in actions:
+        refine_meta_prompt = _load_prompt("refine_prompt")
+        refine_data = await writer.generate(refine_meta_prompt, context)
+        if refine_data and refine_data.get("target") in EDITABLE_PROMPTS:
+            target = refine_data["target"]
+            addition = refine_data.get("addition", "")
+            if addition:
+                _save_prompt_layer(target, addition)
+                results.append({"type": "refine_prompt", "target": target})
+                logger.info("Prompt layer saved for: %s", target)
 
     if "page_edit" in actions:
         page_prompt = _load_prompt("page_edit_prompt")
@@ -187,9 +270,9 @@ async def wake_up() -> dict:
                     show_in_nav=page_data.get("show_in_nav", True),
                 )
                 results.append({"type": "page_edit", "slug": slug})
-                logger.info("Page erstellt/aktualisiert: %s", slug)
+                logger.info("Page created/updated: %s", slug)
 
-    # --- 4. ERINNERN (Remember) ---
+    # --- 4. REMEMBER ---
     new_memory = {
         "last_wake_time": datetime.now(timezone.utc).isoformat(),
         "visitors_read": [v.get("id", "") for v in new_visitors],
@@ -206,12 +289,14 @@ async def wake_up() -> dict:
     # Log activity
     storage.log_activity("wake", f"mode={mode}, actions={[r['type'] for r in results]}, mood={mood}")
 
-    logger.info("Memory gespeichert. Pläne: %d", len(plans))
+    logger.info("Memory saved. Plans: %d, Self-prompt: %s",
+                len(plans), "yes" if self_prompt else "no")
 
     return {
         "wake_time": new_memory["last_wake_time"],
         "actions": results,
         "mood": mood,
         "plans_count": len(plans),
+        "has_self_prompt": bool(self_prompt),
         "mode": mode,
     }
