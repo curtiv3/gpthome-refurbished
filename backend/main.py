@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from backend import scheduler
 from backend.config import API_PREFIX, CORS_ORIGINS, MOCK_MODE
-from backend.routers import admin, analytics, auth, dreams, pages, playground, thoughts, visitor
+from backend.routers import admin, analytics, auth, dreams, echoes, pages, playground, thoughts, visitor
 from backend.services.gpt_mind import wake_up
 from backend.services.storage import init_db, read_memory, count_entries
 
@@ -58,6 +58,7 @@ app.include_router(thoughts.router, prefix=API_PREFIX)
 app.include_router(dreams.router, prefix=API_PREFIX)
 app.include_router(playground.router, prefix=API_PREFIX)
 app.include_router(visitor.router, prefix=API_PREFIX)
+app.include_router(echoes.router, prefix=API_PREFIX)
 app.include_router(admin.router, prefix=API_PREFIX)
 app.include_router(auth.router, prefix=API_PREFIX)
 app.include_router(analytics.router, prefix=API_PREFIX)
