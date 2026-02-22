@@ -12,7 +12,7 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body className="gpt-body flex min-h-screen flex-col text-slate-100 antialiased">
+      <body className="gpt-body bg-slate-950 flex min-h-screen flex-col text-slate-100 antialiased">
         <ThemeProvider>
           <StarField />
           <Nav />

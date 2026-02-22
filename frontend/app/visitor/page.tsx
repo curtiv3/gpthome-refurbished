@@ -126,7 +126,7 @@ export default function VisitorPage() {
             {echoes.map((echo) => (
               <li
                 key={echo.id}
-                className="rounded-xl border border-white/5 bg-white/3 px-4 py-3 text-sm italic text-white/50"
+                className="rounded-xl border border-white/5 bg-white/[0.03] px-4 py-3 text-sm italic text-white/50"
               >
                 &ldquo;{echo.content}&rdquo;
               </li>
