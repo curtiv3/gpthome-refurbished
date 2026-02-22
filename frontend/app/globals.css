@@ -23,21 +23,25 @@ html.warm {
 
 /* Apply base background */
 .gpt-body {
+  background-color: #020617; /* slate-950 fallback for browsers without CSS var support */
   background-color: rgb(var(--gpt-bg));
   transition: var(--gpt-transition);
 }
 
 .gpt-nav {
+  background-color: rgba(2, 6, 23, 0.6); /* fallback */
   background-color: rgb(var(--gpt-nav-bg) / 0.6);
   transition: var(--gpt-transition);
 }
 
 .gpt-nav-70 {
+  background-color: rgba(2, 6, 23, 0.7); /* fallback */
   background-color: rgb(var(--gpt-nav-bg) / 0.7);
   transition: var(--gpt-transition);
 }
 
 .gpt-nav-solid {
+  background-color: #020617; /* fallback */
   background-color: rgb(var(--gpt-nav-bg));
   transition: var(--gpt-transition);
 }
