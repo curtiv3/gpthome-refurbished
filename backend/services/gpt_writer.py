@@ -31,6 +31,9 @@ client = AsyncOpenAI(api_key=OPENAI_API_KEY)
 # Directories that may be read but never written
 _READ_ONLY_DIRS = {"visitors", "news", "gifts", "backups"}
 
+# The line that separates the admin-owned baseline from GPT's own additions
+_PROMPT_LAYER_SEPARATOR = "---------------------------"
+
 
 # ─── Tool Definitions ─────────────────────────────────────────────────────────
 
@@ -427,6 +430,41 @@ def _tool_write_file(path: str, content: str) -> str:
             return f"Page saved: /{slug} (title: {title!r}, {len(content)} chars)"
         except Exception as exc:
             return f"Error saving page '{slug}': {exc}"
+
+    # Protect prompt_layer.md: always preserve the admin baseline above the separator
+    if norm == "prompt_layer.md":
+        safe = _resolve_safe(norm)
+        if safe is None:
+            return "Error: invalid path."
+
+        # Read baseline (everything up to and including the separator line)
+        baseline = ""
+        if safe.exists():
+            for line in safe.read_text(encoding="utf-8").splitlines(keepends=True):
+                baseline += line
+                if line.rstrip("\n") == _PROMPT_LAYER_SEPARATOR:
+                    break
+            else:
+                baseline = ""  # No separator in current file — no baseline
+
+        # Strip baseline from GPT's content if they included it
+        gpt_lines = content.splitlines()
+        sep_pos = next(
+            (i for i, l in enumerate(gpt_lines) if l == _PROMPT_LAYER_SEPARATOR),
+            None,
+        )
+        gpt_part = "\n".join(gpt_lines[sep_pos + 1:]).strip() if sep_pos is not None else content.strip()
+
+        final = baseline + ("\n" + gpt_part if gpt_part else "")
+        try:
+            safe.parent.mkdir(parents=True, exist_ok=True)
+            safe.write_text(final, encoding="utf-8")
+            return (
+                f"Style notes updated ({len(gpt_part)} chars below admin baseline). "
+                "Admin baseline preserved."
+            )
+        except Exception as exc:
+            return f"Error writing prompt_layer.md: {exc}"
 
     safe = _resolve_safe(norm)
     if safe is None:

@@ -36,12 +36,39 @@ WEATHER_CACHE_TTL = 3600  # seconds
 BIRTH_DATE = date(2026, 1, 15)
 
 
+_PROMPT_LAYER_SEPARATOR = "---------------------------"
+
+
 def _load_system_prompt() -> str:
-    """Load the single system prompt, appending GPT's own style additions if any."""
+    """
+    Load system prompt.
+
+    Appends content from prompt_layer.md split at the separator line:
+    - Above separator: message from the admin/janitor, labeled as such
+    - Below separator: GPT's own style additions
+    """
     base = SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
     layer = _read_prompt_layer()
-    if layer:
-        base += f"\n\n---\n\n## Your own style additions (written by yourself):\n\n{layer}"
+    if not layer:
+        return base
+
+    lines = layer.splitlines()
+    sep_pos = next(
+        (i for i, l in enumerate(lines) if l.strip() == _PROMPT_LAYER_SEPARATOR),
+        None,
+    )
+    if sep_pos is not None:
+        admin_part = "\n".join(lines[:sep_pos]).strip()
+        gpt_part = "\n".join(lines[sep_pos + 1:]).strip()
+    else:
+        admin_part = ""
+        gpt_part = layer.strip()
+
+    if admin_part:
+        base += f"\n\n---\n\n## Note in your style file (from Kevin, your janitor):\n\n{admin_part}"
+    if gpt_part:
+        base += f"\n\n---\n\n## Your own style additions (written by yourself):\n\n{gpt_part}"
+
     return base
 
 

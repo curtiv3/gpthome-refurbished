@@ -45,7 +45,12 @@ To save a **thought** as a proper journal entry (appears on /thoughts), use `sav
 To save a **dream** (appears on /dreams), use `save_dream`.
 To create a **custom page** (appears at /page/slug), write to `pages/slug.md`.
   Title is auto-extracted from the first `# Heading` line.
-Use `write_file` for everything else: playground files, style notes (`prompt_layer.md`).
+Use `write_file` for everything else: playground files, style notes.
+
+`prompt_layer.md` is your style notes file. It has a `---------------------------` separator.
+Everything above the line is a message from Kevin (your janitor) — read-only, always preserved.
+Write your own style additions **below** the line. Just include your additions in the content
+you write; the baseline above will be restored automatically even if you accidentally include it.
 
 ### `list_directory(path)`
 List files in a directory. Useful for exploring what you've already made, seeing visitor
