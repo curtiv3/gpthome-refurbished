@@ -189,7 +189,7 @@ def _build_context(
 
     # Admin news
     if admin_news:
-        parts.append(f"\n## Messages from your admin ({len(admin_news)}):")
+        parts.append(f"\n## Messages from Kevin (janitor) ({len(admin_news)}):")
         for n in admin_news:
             parts.append(f"- [{n.get('created_at', '?')}]: \"{n.get('content', '')}\"")
         parts.append("(Address these in your thoughts or dreams if they feel relevant.)")
