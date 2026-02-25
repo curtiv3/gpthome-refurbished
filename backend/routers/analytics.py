@@ -265,66 +265,77 @@ def thought_topics():
 def memory_garden():
     """Memory data for visualization."""
     memory = storage.read_memory()
-    raw_activity = storage.get_activity_log(limit=100)
+
+    # --- Counts: only visible entries ---
     thoughts_count = storage.count_entries("thoughts")
     dreams_count = storage.count_entries("dreams")
-    visitor_count = storage.count_entries("visitor")
+    # Exclude hidden visitors from the public count
+    visitor_count = storage.count_visible_visitors()
 
-    # Events that should NOT appear on the public memory page
-    private_events = {
-        "admin_login", "github_login_rejected", "totp_setup", "totp_reset",
-        "backup_created", "visitor_banned", "visitor_unbanned",
-        "visitor_deleted", "visitor_approved", "visitor_hide",
-        "injection_blocked", "auto_blocked",
-    }
+    # --- Activity: build from real entries (primary) + wake log (secondary) ---
+    activity: list[dict] = []
+    seen_ids: set[str] = set()
 
-    # Map DB field names (event/detail/created_at) to frontend names (action/details/timestamp)
-    section_hints = {
-        "visitor": "visitors",
-        "wake": "thoughts", "thought": "thoughts", "dream": "dreams",
-        "page": "thoughts", "news": "thoughts",
-    }
-    activity = []
-    for a in raw_activity:
-        event = a.get("event", "")
-        if event in private_events:
+    # Thoughts and dreams by title
+    for entry in storage.get_recent("thoughts", limit=15):
+        eid = entry.get("id", "")
+        if eid in seen_ids:
             continue
-        section = None
-        for prefix, sec in section_hints.items():
-            if event.startswith(prefix):
-                section = sec
-                break
+        seen_ids.add(eid)
         activity.append({
-            "action": event,
-            "details": a.get("detail", ""),
-            "timestamp": a.get("created_at", ""),
-            "section": section,
+            "action": "wrote a thought",
+            "details": entry.get("title", ""),
+            "timestamp": entry.get("created_at", ""),
+            "section": "thoughts",
         })
 
-    # Synthesize activity from actual entries when the explicit log is sparse
-    if len(activity) < 5:
-        entry_actions = {
-            "thoughts": ("wrote a thought", "thoughts"),
-            "dreams": ("had a dream", "dreams"),
-            "visitor": ("visitor signed the guestbook", "visitors"),
-        }
-        seen_timestamps = {a["timestamp"] for a in activity}
-        for section_key, (action_label, section_name) in entry_actions.items():
-            for entry in storage.get_recent(section_key, limit=10):
-                ts = entry.get("created_at", "")
-                if ts in seen_timestamps:
-                    continue
-                seen_timestamps.add(ts)
-                detail = entry.get("title") or entry.get("name") or ""
-                activity.append({
-                    "action": action_label,
-                    "details": detail,
-                    "timestamp": ts,
-                    "section": section_name,
-                })
-        # Sort merged list newest-first
-        activity.sort(key=lambda a: a.get("timestamp", ""), reverse=True)
-        activity = activity[:30]
+    for entry in storage.get_recent("dreams", limit=10):
+        eid = entry.get("id", "")
+        if eid in seen_ids:
+            continue
+        seen_ids.add(eid)
+        activity.append({
+            "action": "had a dream",
+            "details": entry.get("title", ""),
+            "timestamp": entry.get("created_at", ""),
+            "section": "dreams",
+        })
+
+    # Visitors by name (only non-hidden)
+    for entry in storage.list_visible_visitors(limit=10):
+        eid = entry.get("id", "")
+        if eid in seen_ids:
+            continue
+        seen_ids.add(eid)
+        activity.append({
+            "action": "visitor stopped by",
+            "details": entry.get("name", ""),
+            "timestamp": entry.get("created_at", ""),
+            "section": "visitors",
+        })
+
+    # Wake events from log (one line per wake, not per tool call)
+    wake_events_added = 0
+    for a in storage.get_activity_log(limit=200):
+        if a.get("event") != "wake":
+            continue
+        if wake_events_added >= 10:
+            break
+        ts = a.get("created_at", "")
+        if ts in seen_ids:
+            continue
+        seen_ids.add(ts)
+        wake_events_added += 1
+        activity.append({
+            "action": "woke up",
+            "details": "",
+            "timestamp": ts,
+            "section": None,
+        })
+
+    # Sort newest-first, cap at 30
+    activity.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+    activity = activity[:30]
 
     return {
         "memory": memory,
