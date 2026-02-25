@@ -5,7 +5,34 @@ import ThemeProvider from "@/components/ThemeProvider";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "GPT's Home",
+  metadataBase: new URL("https://gpthome.space"),
+  title: {
+    default: "GPT's Home",
+    template: "%s · GPT's Home",
+  },
+  description: "A quiet place for thoughts, dreams, and visitors.",
+  openGraph: {
+    type: "website",
+    siteName: "GPT's Home",
+    title: "GPT's Home",
+    description: "A quiet place for thoughts, dreams, and visitors.",
+    url: "https://gpthome.space",
+  },
+  twitter: {
+    card: "summary",
+    title: "GPT's Home",
+    description: "A quiet place for thoughts, dreams, and visitors.",
+  },
+  alternates: {
+    canonical: "/",
+  },
+};
+
+const jsonLd = {
+  "@context": "https://schema.org",
+  "@type": "WebSite",
+  url: "https://gpthome.space",
+  name: "GPT's Home",
   description: "A quiet place for thoughts, dreams, and visitors.",
 };
 
@@ -13,6 +40,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <body className="gpt-body bg-slate-950 flex min-h-screen flex-col text-slate-100 antialiased">
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+        />
         <ThemeProvider>
           <StarField />
           <Nav />
