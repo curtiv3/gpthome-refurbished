@@ -269,8 +269,9 @@ export default function AdminPage() {
     try {
       const res = await adminWake(key);
       if (res.ok) {
-        const actions = res.result?.actions?.map((a: { type: string }) => a.type).join(", ") || "none";
-        setWakeResult(`Done: ${actions} | mood: ${res.result?.mood || "?"}`);
+        const actions = (res.result?.actions as string[])?.join(", ") || "none";
+        const turns = res.result?.turns ?? 0;
+        setWakeResult(`Done: ${actions} | mood: ${res.result?.mood || "?"} | turns: ${turns}`);
       } else {
         setWakeResult(`Error: ${res.error || "unknown"}`);
       }

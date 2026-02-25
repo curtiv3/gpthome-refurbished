@@ -268,97 +268,46 @@ async def wake_up() -> dict:
     logger.info("Context built: %d visitors, %d thoughts, %d dreams, %d admin news",
                 len(new_visitors), len(recent_thoughts), len(recent_dreams), len(admin_news))
 
-    # --- WAKE (single API call) ---
-    response = await writer.wake(system_prompt, context)
+    # --- WAKE (agentic tool loop) ---
+    result = await writer.wake(system_prompt, context)
 
-    mood = response.get("mood", "quiet")
-    plans = response.get("plans", [])
-    self_prompt = response.get("self_prompt", "")
+    mood = result.get("mood", "quiet")
+    self_prompt = result.get("self_prompt", "")
 
-    logger.info("GPT responded: mood=%s, keys=%s", mood,
-                [k for k in response if k not in ("mood", "reasoning")])
+    logger.info("GPT responded: mood=%s, actions=%s, turns=%d",
+                mood, result.get("actions_taken", []), result.get("turns", 0))
 
     if self_prompt:
         _save_self_prompt(self_prompt)
         logger.info("Self-prompt saved for next wake (%d chars)", len(self_prompt))
 
-    # --- ACT (process what GPT created) ---
-    results = []
-    protected_slugs = {"admin", "api", "_next", "favicon.ico"}
-
-    if thought_data := response.get("thought"):
-        thought_data["type"] = "thought"
-        saved = storage.save_entry("thoughts", thought_data)
-        results.append({"type": "thought", "id": saved["id"]})
-        logger.info("Thought saved: %s", saved["id"])
-
-    if dream_data := response.get("dream"):
-        dream_data["type"] = "dream"
-        saved = storage.save_entry("dreams", dream_data)
-        results.append({"type": "dream", "id": saved["id"]})
-        logger.info("Dream saved: %s", saved["id"])
-
-    if playground_data := response.get("playground"):
-        if "files" in playground_data:
-            project_name = playground_data.get("project_name", "experiment")
-            meta = {
-                "project_name": project_name,
-                "title": playground_data.get("title", project_name),
-                "description": playground_data.get("description", ""),
-                "created_at": storage._now_iso(),
-            }
-            storage.save_raw_file(project_name, "meta.json",
-                                  json.dumps(meta, ensure_ascii=False, indent=2))
-            for filename, content in playground_data["files"].items():
-                storage.save_raw_file(project_name, filename, content)
-            results.append({"type": "playground", "project": project_name})
-            logger.info("Playground project saved: %s", project_name)
-
-    if page_data := response.get("page_edit"):
-        slug = page_data.get("slug", "")
-        if slug and slug not in protected_slugs:
-            storage.save_custom_page(
-                slug=slug,
-                title=page_data.get("title", slug),
-                content=page_data.get("content", ""),
-                created_by="gpt",
-                nav_order=page_data.get("nav_order", 50),
-                show_in_nav=page_data.get("show_in_nav", True),
-            )
-            results.append({"type": "page_edit", "slug": slug})
-            logger.info("Page saved: %s", slug)
-
-    if refine_data := response.get("refine"):
-        addition = refine_data.get("addition", "")
-        if addition:
-            _save_prompt_layer(addition)
-            results.append({"type": "refine"})
-            logger.info("Prompt layer updated (%d chars)", len(addition))
-
     # --- REMEMBER ---
+    # ACT phase removed: GPT writes directly via save_thought/save_dream tools during wake.
     new_memory = {
         "last_wake_time": datetime.now(timezone.utc).isoformat(),
         "visitors_read": [v.get("id", "") for v in new_visitors],
-        "actions_taken": results,
+        "actions_taken": result.get("actions_taken", []),
         "mood": mood,
-        "plans": plans,
+        "plans": [],  # Plans now live in self_prompt prose
     }
     storage.save_memory(new_memory)
 
     if admin_news:
         storage.mark_news_read([n["id"] for n in admin_news])
 
-    action_types = [r["type"] for r in results]
-    storage.log_activity("wake", f"mode={mode}, actions={action_types}, mood={mood}")
+    storage.log_activity(
+        "wake",
+        f"mode={mode}, actions={result.get('actions_taken', [])}, mood={mood}, turns={result.get('turns', 0)}",
+    )
 
-    logger.info("Memory saved. Plans: %d, Self-prompt: %s",
-                len(plans), "yes" if self_prompt else "no")
+    logger.info("Memory saved. Actions: %s, Self-prompt: %s",
+                result.get("actions_taken", []), "yes" if self_prompt else "no")
 
     return {
         "wake_time": new_memory["last_wake_time"],
-        "actions": results,
+        "actions": result.get("actions_taken", []),
         "mood": mood,
-        "plans_count": len(plans),
+        "turns": result.get("turns", 0),
         "has_self_prompt": bool(self_prompt),
         "mode": mode,
     }

@@ -49,6 +49,10 @@ ADMIN_GITHUB_USERNAMES = [
 # --- TOTP 2FA ---
 TOTP_ISSUER = os.getenv("TOTP_ISSUER", "GPT Home Admin")
 
+# --- Agentic wake loop ---
+MAX_WAKE_TURNS = int(os.getenv("MAX_WAKE_TURNS", "20"))       # max tool-call turns per wake
+GPT_TEMPERATURE = float(os.getenv("GPT_TEMPERATURE", "0.6"))  # lower = less poetic drift
+
 # --- Rate limiting ---
 VISITOR_RATE_LIMIT = int(os.getenv("VISITOR_RATE_LIMIT", "5"))       # max messages
 VISITOR_RATE_WINDOW = int(os.getenv("VISITOR_RATE_WINDOW", "3600"))   # per seconds
