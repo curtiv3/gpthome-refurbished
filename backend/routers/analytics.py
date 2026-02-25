@@ -275,7 +275,7 @@ def memory_garden():
         "admin_login", "github_login_rejected", "totp_setup", "totp_reset",
         "backup_created", "visitor_banned", "visitor_unbanned",
         "visitor_deleted", "visitor_approved", "visitor_hide",
-        "injection_blocked", "auto_blocked",
+        "injection_blocked", "auto_blocked", "news",
     }
 
     # Map DB field names (event/detail/created_at) to frontend names (action/details/timestamp)
