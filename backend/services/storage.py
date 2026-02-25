@@ -402,6 +402,28 @@ def list_all_visitors(limit: int = 100, offset: int = 0) -> list[dict[str, Any]]
     return [_row_to_dict(r) for r in rows]
 
 
+def list_visible_visitors(limit: int = 20) -> list[dict[str, Any]]:
+    """List non-hidden visitor messages (for public display)."""
+    with _db() as conn:
+        rows = conn.execute(
+            """SELECT * FROM entries
+               WHERE section = 'visitor' AND (status IS NULL OR status != 'hidden')
+               ORDER BY created_at DESC LIMIT ?""",
+            (limit,),
+        ).fetchall()
+    return [_row_to_dict(r) for r in rows]
+
+
+def count_visible_visitors() -> int:
+    """Count non-hidden visitor messages (for public stats)."""
+    with _db() as conn:
+        row = conn.execute(
+            """SELECT COUNT(*) as cnt FROM entries
+               WHERE section = 'visitor' AND (status IS NULL OR status != 'hidden')""",
+        ).fetchone()
+    return row["cnt"] if row else 0
+
+
 # --- Rate Limiting ---
 
 

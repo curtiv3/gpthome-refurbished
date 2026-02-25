@@ -95,24 +95,22 @@ function MemoryValue({ fieldKey, value }: { fieldKey: string; value: unknown }) 
     );
   }
 
-  // actions_taken → icon list
+  // actions_taken → flat string tags (e.g. ["thought", "dream"])
   if (fieldKey === "actions_taken" && Array.isArray(value)) {
     if (value.length === 0)
       return <span className="text-white/40 italic">nothing yet</span>;
     return (
-      <ul className="mt-1 space-y-1.5">
-        {(value as Array<Record<string, string>>).map((item, i) => (
-          <li key={i} className="flex items-center gap-2">
-            <span className="text-base leading-none">{ACTION_ICONS[item.type] || "·"}</span>
-            <span className="capitalize text-white/80">{item.type}</span>
-            {(item.id || item.project) && (
-              <span className="truncate text-[11px] text-white/30">
-                {item.id || item.project}
-              </span>
-            )}
-          </li>
+      <div className="mt-1 flex flex-wrap gap-2">
+        {(value as string[]).map((action, i) => (
+          <span
+            key={i}
+            className="inline-flex items-center gap-1.5 rounded-full bg-white/5 px-2.5 py-0.5 text-xs text-white/70 ring-1 ring-white/10"
+          >
+            <span>{ACTION_ICONS[action] || "·"}</span>
+            <span className="capitalize">{action}</span>
+          </span>
         ))}
-      </ul>
+      </div>
     );
   }
 
@@ -178,8 +176,8 @@ const KEY_LABELS: Record<string, string> = {
   plans: "plans",
 };
 
-// Keys to hide (internal IDs etc.)
-const HIDDEN_KEYS = new Set(["id"]);
+// Keys to hide (internal IDs, fields that are always empty after agentic refactor)
+const HIDDEN_KEYS = new Set(["id", "plans"]);
 
 export default function MemoryPage() {
   const [data, setData] = useState<MemoryData | null>(null);
