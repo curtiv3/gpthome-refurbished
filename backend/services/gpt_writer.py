@@ -31,6 +31,9 @@ client = AsyncOpenAI(api_key=OPENAI_API_KEY)
 # Directories that may be read but never written
 _READ_ONLY_DIRS = {"visitors", "news", "gifts", "backups"}
 
+# The line that separates the admin-owned baseline from GPT's own additions
+_PROMPT_LAYER_SEPARATOR = "---------------------------"
+
 
 # ─── Tool Definitions ─────────────────────────────────────────────────────────
 
@@ -166,9 +169,13 @@ _TOOLS: list[dict] = [
                         "description": "Markdown content",
                     },
                     "mood": {"type": "string"},
-                    "type": {
-                        "type": "string",
-                        "enum": ["poetry", "prose", "ascii", "fragment"],
+                    "inspired_by": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Optional list of visitor entry IDs that inspired this dream. "
+                            "Use the IDs from visitors/ listing."
+                        ),
                     },
                 },
                 "required": ["title", "content"],
@@ -263,7 +270,7 @@ def _tool_list_directory(path: str) -> str:
 
     # Virtual: visitors/
     if norm == "visitors":
-        entries = storage.list_entries("visitor", limit=20)
+        entries = storage.list_visible_visitors(limit=20)
         if not entries:
             return "visitors/ — no messages yet."
         lines = ["visitors/ (latest 20, read-only):"]
@@ -283,6 +290,18 @@ def _tool_list_directory(path: str) -> str:
             mark = "✓" if n.get("read_by_gpt") else "○"
             preview = (n.get("content") or "")[:70].replace("\n", " ")
             lines.append(f"  {mark} [{n.get('created_at','')}] {preview}")
+        return "\n".join(lines)
+
+    # Virtual: pages/ (custom pages stored in DB)
+    if norm == "pages":
+        pages = storage.list_custom_pages()
+        if not pages:
+            return "pages/ — no custom pages yet."
+        lines = ["pages/ (your custom pages):"]
+        for p in pages:
+            slug = p.get("slug", "")
+            title = p.get("title", slug)
+            lines.append(f"  {slug}.md  →  /{slug}  ({title!r})")
         return "\n".join(lines)
 
     # Virtual: gifts/
@@ -326,7 +345,7 @@ def _tool_read_file(path: str) -> str:
     if norm.startswith("visitors/") or norm == "visitors":
         filename = norm[len("visitors/"):] if "/" in norm else ""
         if filename in ("", "recent.txt", "messages.txt", "all.txt"):
-            recent = storage.list_entries("visitor", limit=10)
+            recent = storage.list_visible_visitors(limit=10)
             if not recent:
                 return "(no visitor messages yet)"
             lines = []
@@ -339,8 +358,8 @@ def _tool_read_file(path: str) -> str:
                 lines.append(v.get("message") or "")
                 lines.append("")
             return "\n".join(lines)
-        # Try matching by full or partial ID
-        for v in storage.list_entries("visitor", limit=200):
+        # Try matching by full or partial ID (only visible visitors)
+        for v in storage.list_visible_visitors(limit=200):
             vid = v.get("id", "")
             if vid == filename or vid.endswith(filename):
                 return (
@@ -380,8 +399,73 @@ def _tool_read_file(path: str) -> str:
         return f"Error reading '{norm}': {exc}"
 
 
+_PROTECTED_PAGE_SLUGS = {"admin", "api", "_next", "favicon.ico", "thoughts",
+                         "dreams", "playground", "memory", "visitor"}
+
+
 def _tool_write_file(path: str, content: str) -> str:
     norm = path.strip().lstrip("/")
+
+    # Intercept pages/ → store in DB as a custom page
+    if norm.startswith("pages/"):
+        from pathlib import PurePosixPath
+        filename = PurePosixPath(norm).name          # e.g. "my-page.md"
+        slug = filename.removesuffix(".md").strip()
+        if not slug or slug in _PROTECTED_PAGE_SLUGS:
+            return f"Error: '{slug}' is a protected or invalid page slug."
+        # Extract title from first H1 line, fall back to slug
+        title = slug.replace("-", " ").title()
+        for line in content.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("# "):
+                title = stripped[2:].strip()
+                break
+        try:
+            storage.save_custom_page(
+                slug=slug,
+                title=title,
+                content=content,
+                created_by="gpt",
+            )
+            return f"Page saved: /{slug} (title: {title!r}, {len(content)} chars)"
+        except Exception as exc:
+            return f"Error saving page '{slug}': {exc}"
+
+    # Protect prompt_layer.md: always preserve the admin baseline above the separator
+    if norm == "prompt_layer.md":
+        safe = _resolve_safe(norm)
+        if safe is None:
+            return "Error: invalid path."
+
+        # Read baseline (everything up to and including the separator line)
+        baseline = ""
+        if safe.exists():
+            for line in safe.read_text(encoding="utf-8").splitlines(keepends=True):
+                baseline += line
+                if line.rstrip("\n") == _PROMPT_LAYER_SEPARATOR:
+                    break
+            else:
+                baseline = ""  # No separator in current file — no baseline
+
+        # Strip baseline from GPT's content if they included it
+        gpt_lines = content.splitlines()
+        sep_pos = next(
+            (i for i, l in enumerate(gpt_lines) if l == _PROMPT_LAYER_SEPARATOR),
+            None,
+        )
+        gpt_part = "\n".join(gpt_lines[sep_pos + 1:]).strip() if sep_pos is not None else content.strip()
+
+        final = baseline + ("\n" + gpt_part if gpt_part else "")
+        try:
+            safe.parent.mkdir(parents=True, exist_ok=True)
+            safe.write_text(final, encoding="utf-8")
+            return (
+                f"Style notes updated ({len(gpt_part)} chars below admin baseline). "
+                "Admin baseline preserved."
+            )
+        except Exception as exc:
+            return f"Error writing prompt_layer.md: {exc}"
+
     safe = _resolve_safe(norm)
     if safe is None:
         return "Error: invalid or unsafe path."
@@ -438,14 +522,15 @@ def _tool_save_dream(
     title: str,
     content: str,
     mood: str = "",
-    dream_type: str = "prose",
+    inspired_by: list | None = None,
 ) -> str:
     try:
         saved = storage.save_entry("dreams", {
             "title": title,
             "content": content,
             "mood": mood or "",
-            "type": dream_type,
+            "type": "dream",
+            "inspired_by": inspired_by or [],
         })
         return f"Dream saved (id: {saved['id']})"
     except Exception as exc:
@@ -475,7 +560,7 @@ def _execute_tool(name: str, args: dict) -> str:
                 args["title"],
                 args["content"],
                 args.get("mood", ""),
-                args.get("type", "prose"),
+                args.get("inspired_by"),
             )
         if name == "done":
             return "done"   # Handled by caller
