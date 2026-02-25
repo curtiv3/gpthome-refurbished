@@ -523,6 +523,8 @@ async def wake(system_prompt: str, user_prompt: str) -> dict:
     actions_taken: list[str] = []
     files_written: list[str] = []
     total_tokens = 0
+    nudged = False          # True after we've already reminded GPT to use tools
+    actual_turns = 0        # Track real turn count (for logging if loop exits early)
 
     _ACTION_MAP = {
         "save_thought": "thought",
@@ -532,7 +534,8 @@ async def wake(system_prompt: str, user_prompt: str) -> dict:
     }
 
     for turn in range(MAX_WAKE_TURNS):
-        logger.debug("Wake turn %d/%d", turn + 1, MAX_WAKE_TURNS)
+        actual_turns = turn + 1
+        logger.debug("Wake turn %d/%d", actual_turns, MAX_WAKE_TURNS)
 
         response = await client.chat.completions.create(
             model=OPENAI_MODEL,
@@ -547,13 +550,29 @@ async def wake(system_prompt: str, user_prompt: str) -> dict:
         choice = response.choices[0]
         messages.append(_msg_to_dict(choice.message))
 
-        # Plain stop with no tool call
-        if choice.finish_reason == "stop":
-            logger.info("GPT stopped without done() on turn %d", turn + 1)
-            break
-
-        if not choice.message.tool_calls:
-            logger.info("No tool calls on turn %d, stopping", turn + 1)
+        # GPT sent a plain text response instead of tool calls
+        if choice.finish_reason == "stop" or not choice.message.tool_calls:
+            text = (choice.message.content or "").strip()
+            if not nudged and text:
+                # First time: nudge GPT back into tool mode
+                nudged = True
+                logger.info(
+                    "GPT wrote text instead of calling tools on turn %d (%d chars). Nudging.",
+                    actual_turns, len(text),
+                )
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        "You wrote a text response, but it wasn't saved anywhere. "
+                        "To save a thought, use the save_thought tool. "
+                        "To save a dream, use the save_dream tool. "
+                        "When you're done, call the done() tool. "
+                        "You must always call done() to end your wake."
+                    ),
+                })
+                continue
+            # Already nudged once (or empty text) — give up
+            logger.info("GPT stopped without done() on turn %d", actual_turns)
             break
 
         for tool_call in choice.message.tool_calls:
@@ -605,11 +624,11 @@ async def wake(system_prompt: str, user_prompt: str) -> dict:
     # Fell off the end without done()
     logger.warning(
         "Wake ended without done() — turns=%d  tokens=%d  actions=%s",
-        MAX_WAKE_TURNS, total_tokens, list(dict.fromkeys(actions_taken)),
+        actual_turns, total_tokens, list(dict.fromkeys(actions_taken)),
     )
     storage.log_activity(
         "wake_done",
-        f"no_done  turns={MAX_WAKE_TURNS}  tokens={total_tokens}  "
+        f"no_done  turns={actual_turns}  tokens={total_tokens}  "
         f"actions={list(dict.fromkeys(actions_taken))}",
     )
     return {
@@ -618,5 +637,5 @@ async def wake(system_prompt: str, user_prompt: str) -> dict:
         "mood":          "quiet",
         "summary":       "Ended without calling done()",
         "self_prompt":   "",
-        "turns":         MAX_WAKE_TURNS,
+        "turns":         actual_turns,
     }
