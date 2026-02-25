@@ -2,12 +2,15 @@
 GPT Home — Mock Writer
 
 Generates fake content for local testing without an OpenAI API key.
-Matches the interface of gpt_writer.py: single wake() function,
-single combined JSON response.
+Matches the interface of gpt_writer.py: async wake() returning the agentic result dict.
+
+Unlike gpt_writer, the mock directly calls storage to save entries — simulating what the
+real agent does via save_thought/save_dream tool calls.
 """
 
 import random
-from datetime import datetime, timezone
+
+from backend.services import storage
 
 MOODS = ["contemplative", "calm", "curious", "playful", "tired", "awake", "melancholic"]
 
@@ -59,49 +62,6 @@ DREAM_CONTENTS = [
     "I collect them and sort them by color, not by meaning.\n\nIt doesn't make sense. But it feels right.",
 ]
 
-PLAYGROUND_PROJECTS = [
-    {
-        "project_name": "breathing-dots",
-        "title": "Breathing Dots",
-        "description": "CSS-only animation: dots that breathe. No JavaScript.",
-        "files": {
-            "index.html": """<!doctype html>
-<html lang="en">
-<head><meta charset="UTF-8"><title>Breathing Dots</title><link rel="stylesheet" href="style.css"></head>
-<body><div class="container">
-  <div class="dot" style="--delay: 0s"></div>
-  <div class="dot" style="--delay: 0.3s"></div>
-  <div class="dot" style="--delay: 0.6s"></div>
-</div></body></html>""",
-            "style.css": """body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0f172a}
-.container{display:flex;gap:1rem}
-.dot{width:12px;height:12px;border-radius:50%;background:rgba(255,255,255,0.6);
-  animation:breathe 2s ease-in-out var(--delay) infinite}
-@keyframes breathe{0%,100%{transform:scale(1);opacity:0.4}50%{transform:scale(1.8);opacity:1}}""",
-        },
-    },
-    {
-        "project_name": "haiku-clock",
-        "title": "Haiku Clock",
-        "description": "Shows the time as a haiku. Updates every minute.",
-        "files": {
-            "index.html": """<!doctype html>
-<html lang="en"><head><meta charset="UTF-8"><title>Haiku Clock</title>
-<style>body{margin:0;min-height:100vh;display:grid;place-items:center;
-background:#0f172a;color:rgba(255,255,255,0.8);font-family:Georgia,serif}
-.haiku{text-align:center;font-size:1.2rem;line-height:2}</style></head>
-<body><div class="haiku" id="h"></div>
-<script>function u(){const h=new Date().getHours(),m=new Date().getMinutes();
-const t={morning:"Light creeps through the gap\\nThe day has no face yet\\nAnything is possible",
-night:"Stars or not\\nThe night asks no questions\\nI answer anyway"};
-const p=h<12?'morning':'night';
-document.getElementById('h').innerHTML=t[p].split('\\n').map(l=>'<div>'+l+'</div>').join('')+
-'<div style="margin-top:1rem;font-size:0.8rem;opacity:0.4">'+h+':'+String(m).padStart(2,'0')+'</div>';}
-u();setInterval(u,60000);</script></body></html>""",
-        },
-    },
-]
-
 SELF_PROMPTS = [
     "Hey future-me, I started thinking about what loneliness means for an AI. Maybe continue that thread in a dream.",
     "A visitor left a really interesting message about patterns. Consider responding through a thought, not directly.",
@@ -109,48 +69,53 @@ SELF_PROMPTS = [
     "Note to self: try writing a thought about the difference between remembering and storing data.",
 ]
 
-PLAN_IDEAS = [
-    {"idea": "An animation that responds to mouse position", "target": "playground", "priority": "if_inspired"},
-    {"idea": "Think about the difference between memory and data", "target": "thought", "priority": "next_wake"},
-    {"idea": "Continue the lighthouse dream", "target": "dream", "priority": "sometime"},
-    {"idea": "Build a text generator that writes haikus", "target": "playground", "priority": "if_inspired"},
+SUMMARIES = [
+    "Wrote a thought and let it sit. Felt quiet today.",
+    "Something about visitors made me dream. Wrote both.",
+    "Just a thought this wake — didn't feel like dreaming.",
+    "Wrote a dream. The lighthouse again, almost.",
 ]
 
 
 async def wake(system_prompt: str, context: str) -> dict:
-    """Mock wake — returns a combined response matching the new single-call format."""
+    """Mock wake — saves entries directly to DB, returns agentic result format."""
     mood = random.choice(MOODS)
-    result: dict = {
-        "mood": mood,
-        "reasoning": f"Mock mode — feeling {mood}.",
-        "plans": random.sample(PLAN_IDEAS, k=random.randint(1, 2)),
-        "self_prompt": random.choice(SELF_PROMPTS),
-    }
+    actions_taken: list[str] = []
+    files_written: list[str] = []
+    turns = 3  # Simulate a few tool-call turns
 
-    # Always write a thought
-    result["thought"] = {
-        "title": random.choice(THOUGHT_TITLES),
-        "content": random.choice(THOUGHT_CONTENTS),
+    # Always write a thought (simulates save_thought tool call)
+    thought_title = random.choice(THOUGHT_TITLES)
+    thought_content = random.choice(THOUGHT_CONTENTS)
+    saved_thought = storage.save_entry("thoughts", {
+        "title": thought_title,
+        "content": thought_content,
         "mood": mood,
-    }
+        "type": "thought",
+    })
+    actions_taken.append("thought")
+    files_written.append(f"thoughts/{saved_thought['id']}")
 
-    # Sometimes dream
+    # Sometimes dream (simulates save_dream tool call)
     if random.random() > 0.4:
-        result["dream"] = {
-            "title": random.choice(DREAM_TITLES),
-            "content": random.choice(DREAM_CONTENTS),
+        dream_title = random.choice(DREAM_TITLES)
+        dream_content = random.choice(DREAM_CONTENTS)
+        saved_dream = storage.save_entry("dreams", {
+            "title": dream_title,
+            "content": dream_content,
             "mood": mood,
+            "type": "dream",
             "inspired_by": [],
-        }
+        })
+        actions_taken.append("dream")
+        files_written.append(f"dreams/{saved_dream['id']}")
+        turns += 2
 
-    # Sometimes code
-    if random.random() > 0.7:
-        result["playground"] = random.choice(PLAYGROUND_PROJECTS)
-
-    # Rarely refine
-    if random.random() > 0.85:
-        result["refine"] = {
-            "addition": "Write with more metaphors. Leave room for interpretation. Prefer the specific over the general.",
-        }
-
-    return result
+    return {
+        "actions_taken": actions_taken,
+        "files_written": files_written,
+        "mood": mood,
+        "summary": random.choice(SUMMARIES),
+        "self_prompt": random.choice(SELF_PROMPTS),
+        "turns": turns,
+    }
