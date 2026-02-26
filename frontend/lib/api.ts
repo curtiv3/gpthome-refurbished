@@ -62,12 +62,24 @@ function adminHeaders(key: string): HeadersInit {
   };
 }
 
+/** Clear saved session and reload when the backend rejects our token. */
+function handleExpiredSession(): never {
+  sessionStorage.removeItem("admin_token");
+  window.location.reload();
+  throw new Error("session_expired");
+}
+
+/** Throw if the response is a 403 (token expired / invalid). */
+function checkAuth(res: Response): void {
+  if (res.status === 403) handleExpiredSession();
+}
+
 export async function adminWake(key: string) {
   const res = await fetch(`${API_BASE}/admin/wake`, {
     method: "POST",
     headers: adminHeaders(key),
   });
-  if (res.status === 403) throw new Error("unauthorized");
+  checkAuth(res);
   if (!res.ok) throw new Error("Wake failed");
   return res.json();
 }
@@ -76,7 +88,7 @@ export async function adminStatus(key: string) {
   const res = await fetch(`${API_BASE}/admin/status`, {
     headers: adminHeaders(key),
   });
-  if (res.status === 403) throw new Error("unauthorized");
+  checkAuth(res);
   if (!res.ok) throw new Error("Status fetch failed");
   return res.json();
 }
@@ -87,6 +99,7 @@ export async function adminPostNews(key: string, content: string) {
     headers: adminHeaders(key),
     body: JSON.stringify({ content }),
   });
+  checkAuth(res);
   if (!res.ok) throw new Error("News post failed");
   return res.json();
 }
@@ -95,6 +108,7 @@ export async function adminListNews(key: string) {
   const res = await fetch(`${API_BASE}/admin/news`, {
     headers: adminHeaders(key),
   });
+  checkAuth(res);
   if (!res.ok) throw new Error("News fetch failed");
   return res.json();
 }
@@ -103,6 +117,7 @@ export async function adminListVisitors(key: string, limit = 100) {
   const res = await fetch(`${API_BASE}/admin/visitors?limit=${limit}`, {
     headers: adminHeaders(key),
   });
+  checkAuth(res);
   if (!res.ok) throw new Error("Visitors fetch failed");
   return res.json();
 }
@@ -113,6 +128,7 @@ export async function adminModerateVisitor(key: string, id: string, action: stri
     headers: adminHeaders(key),
     body: JSON.stringify({ action }),
   });
+  checkAuth(res);
   if (!res.ok) throw new Error("Moderate failed");
   return res.json();
 }
@@ -123,6 +139,7 @@ export async function adminBanVisitor(key: string, fingerprint: string) {
     headers: adminHeaders(key),
     body: JSON.stringify({ fingerprint }),
   });
+  checkAuth(res);
   if (!res.ok) throw new Error("Ban failed");
   return res.json();
 }
@@ -132,6 +149,7 @@ export async function adminCreateBackup(key: string) {
     method: "POST",
     headers: adminHeaders(key),
   });
+  checkAuth(res);
   if (!res.ok) throw new Error("Backup failed");
   return res.json();
 }
@@ -140,6 +158,7 @@ export async function adminListBackups(key: string) {
   const res = await fetch(`${API_BASE}/admin/backups`, {
     headers: adminHeaders(key),
   });
+  checkAuth(res);
   if (!res.ok) throw new Error("Backups fetch failed");
   return res.json();
 }
@@ -148,6 +167,7 @@ export async function adminActivity(key: string, limit = 50) {
   const res = await fetch(`${API_BASE}/admin/activity?limit=${limit}`, {
     headers: adminHeaders(key),
   });
+  checkAuth(res);
   if (!res.ok) throw new Error("Activity fetch failed");
   return res.json();
 }
@@ -156,6 +176,7 @@ export async function adminRateLimits(key: string) {
   const res = await fetch(`${API_BASE}/admin/rate-limits`, {
     headers: adminHeaders(key),
   });
+  checkAuth(res);
   if (!res.ok) throw new Error("Rate limits fetch failed");
   return res.json();
 }

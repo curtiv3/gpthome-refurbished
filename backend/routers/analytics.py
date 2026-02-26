@@ -32,7 +32,7 @@ def creative_evolution():
             "unique_words": len(set(w.lower() for w in words)),
         })
 
-    timeline.sort(key=lambda x: x.get("created_at", ""))
+    timeline.sort(key=lambda x: x.get("created_at", ""), reverse=True)
     return timeline
 
 
@@ -40,7 +40,7 @@ def creative_evolution():
 def visitor_analytics():
     """Visitor network data."""
     stats = storage.get_visitor_stats()
-    messages = storage.list_all_visitors(limit=200)
+    messages = storage.list_visible_visitors(limit=200)
 
     # Build visitor connections (visitors who posted near the same time)
     names: dict[str, list[str]] = {}
@@ -314,21 +314,31 @@ def memory_garden():
             "section": "visitors",
         })
 
-    # Wake events from log (one line per wake, not per tool call)
-    wake_events_added = 0
-    for a in storage.get_activity_log(limit=200):
-        if a.get("event") != "wake":
+    # Wake events + file changes from activity log
+    _EVENT_LABELS = {
+        "wake": "woke up",
+        "file_modified": "modified a file",
+        "file_created": "created a file",
+        "page_saved": "saved a page",
+    }
+    event_caps = {"wake": 10, "file_modified": 10, "file_created": 5, "page_saved": 5}
+    event_counts: dict[str, int] = {}
+    for a in storage.get_activity_log(limit=300):
+        ev = a.get("event", "")
+        if ev not in _EVENT_LABELS:
             continue
-        if wake_events_added >= 10:
-            break
+        cap = event_caps.get(ev, 5)
+        event_counts[ev] = event_counts.get(ev, 0) + 1
+        if event_counts[ev] > cap:
+            continue
         ts = a.get("created_at", "")
-        if ts in seen_ids:
+        uid = f"{ev}:{ts}"
+        if uid in seen_ids:
             continue
-        seen_ids.add(ts)
-        wake_events_added += 1
+        seen_ids.add(uid)
         activity.append({
-            "action": "woke up",
-            "details": "",
+            "action": _EVENT_LABELS[ev],
+            "details": a.get("detail", ""),
             "timestamp": ts,
             "section": None,
         })

@@ -13,6 +13,51 @@ interface CustomPage {
   updated_at: string;
 }
 
+/* ── Inline formatting via React elements (no innerHTML) ── */
+const INLINE_TOKEN = /\*\*(.+?)\*\*|\*(.+?)\*|`(.+?)`/g;
+
+function renderInline(line: string, lineKey: number) {
+  const parts: React.ReactNode[] = [];
+  let last = 0;
+  let pk = 0;
+  let m: RegExpExecArray | null;
+
+  INLINE_TOKEN.lastIndex = 0;
+  while ((m = INLINE_TOKEN.exec(line)) !== null) {
+    if (m.index > last) parts.push(line.slice(last, m.index));
+    if (m[1] != null) {
+      parts.push(
+        <strong key={pk++} className="font-semibold text-white/90">
+          {m[1]}
+        </strong>
+      );
+    } else if (m[2] != null) {
+      parts.push(
+        <em key={pk++} className="italic text-white/70">
+          {m[2]}
+        </em>
+      );
+    } else if (m[3] != null) {
+      parts.push(
+        <code
+          key={pk++}
+          className="rounded bg-white/10 px-1.5 py-0.5 text-xs font-mono text-white/80"
+        >
+          {m[3]}
+        </code>
+      );
+    }
+    last = m.index + m[0].length;
+  }
+  if (last < line.length) parts.push(line.slice(last));
+
+  return (
+    <p key={lineKey} className="my-1">
+      {parts.length > 0 ? parts : line}
+    </p>
+  );
+}
+
 export default function CustomPageView() {
   const params = useParams();
   const slug = params.slug as string;
@@ -140,28 +185,8 @@ export default function CustomPageView() {
               return <div key={i} className="h-3" />;
             }
 
-            // Bold (**text**) and italic (*text*) inline formatting
-            const formatted = line
-              .replace(
-                /\*\*(.+?)\*\*/g,
-                '<strong class="font-semibold text-white/90">$1</strong>'
-              )
-              .replace(
-                /\*(.+?)\*/g,
-                '<em class="italic text-white/70">$1</em>'
-              )
-              .replace(
-                /`(.+?)`/g,
-                '<code class="rounded bg-white/10 px-1.5 py-0.5 text-xs font-mono text-white/80">$1</code>'
-              );
-
-            return (
-              <p
-                key={i}
-                className="my-1"
-                dangerouslySetInnerHTML={{ __html: formatted }}
-              />
-            );
+            // Bold, italic, code — rendered as React elements (no innerHTML)
+            return renderInline(line, i);
           })}
         </div>
       </div>

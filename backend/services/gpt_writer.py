@@ -218,17 +218,23 @@ _TOOLS: list[dict] = [
 def _resolve_safe(raw: str):
     """
     Resolve a user-supplied relative path against DATA_DIR.
-    Returns None if the path escapes DATA_DIR or contains suspicious chars.
+    Returns None if the path escapes DATA_DIR, contains suspicious chars,
+    or involves symlinks that point outside DATA_DIR.
     """
     if not raw or not isinstance(raw, str):
         return None
     if "\x00" in raw or "~" in raw:
         return None
     try:
-        from pathlib import Path
         resolved = (DATA_DIR / raw).resolve()
-        if not str(resolved).startswith(str(DATA_DIR.resolve())):
+        if not resolved.is_relative_to(DATA_DIR.resolve()):
             return None
+        # Block symlinks that could point outside DATA_DIR
+        candidate = DATA_DIR / raw
+        if candidate.exists() and candidate.is_symlink():
+            link_target = candidate.resolve(strict=True)
+            if not link_target.is_relative_to(DATA_DIR.resolve()):
+                return None
         return resolved
     except Exception:
         return None
@@ -411,7 +417,7 @@ def _tool_write_file(path: str, content: str) -> str:
         from pathlib import PurePosixPath
         filename = PurePosixPath(norm).name          # e.g. "my-page.md"
         slug = filename.removesuffix(".md").strip()
-        if not slug or slug in _PROTECTED_PAGE_SLUGS:
+        if not slug or slug.lower() in _PROTECTED_PAGE_SLUGS:
             return f"Error: '{slug}' is a protected or invalid page slug."
         # Extract title from first H1 line, fall back to slug
         title = slug.replace("-", " ").title()
@@ -427,6 +433,7 @@ def _tool_write_file(path: str, content: str) -> str:
                 content=content,
                 created_by="gpt",
             )
+            storage.log_activity("page_saved", f"/{slug}")
             return f"Page saved: /{slug} (title: {title!r}, {len(content)} chars)"
         except Exception as exc:
             return f"Error saving page '{slug}': {exc}"
@@ -457,8 +464,11 @@ def _tool_write_file(path: str, content: str) -> str:
 
         final = baseline + ("\n" + gpt_part if gpt_part else "")
         try:
+            existed = safe.exists()
             safe.parent.mkdir(parents=True, exist_ok=True)
             safe.write_text(final, encoding="utf-8")
+            event = "file_modified" if existed else "file_created"
+            storage.log_activity(event, norm)
             return (
                 f"Style notes updated ({len(gpt_part)} chars below admin baseline). "
                 "Admin baseline preserved."
@@ -472,22 +482,102 @@ def _tool_write_file(path: str, content: str) -> str:
     if _is_write_blocked(safe):
         return f"Error: '{norm}' is in a read-only area."
     try:
+        existed = safe.exists()
         safe.parent.mkdir(parents=True, exist_ok=True)
         safe.write_text(content, encoding="utf-8")
+        # Log file changes so they appear in the activity feed
+        event = "file_modified" if existed else "file_created"
+        storage.log_activity(event, norm)
         return f"Written: {norm} ({len(content)} chars)"
     except Exception as exc:
         return f"Error writing '{norm}': {exc}"
 
 
+# Minimal environment for sandboxed Python execution.
+# Strips all secrets (OPENAI_API_KEY, ADMIN_SECRET, etc.).
+# Minimal environment for sandboxed Python execution.
+# Strips all secrets (OPENAI_API_KEY, ADMIN_SECRET, etc.).
+# PYTHONPATH empty to prevent importing from unexpected locations.
+_SANDBOX_ENV = {
+    "PATH": "/usr/local/bin:/usr/bin:/bin",
+    "HOME": str(PLAYGROUND_DIR),
+    "LANG": "en_US.UTF-8",
+    "PYTHONDONTWRITEBYTECODE": "1",
+    "PYTHONPATH": "",
+}
+
+
+# Sandbox preamble: block network access, filesystem escape, process spawning,
+# ctypes FFI, os.system/exec, and __subclasses__ introspection.
+# Injected before every user script to prevent exfiltration and reading secrets.
+_SANDBOX_PREAMBLE = """\
+def _deny(*a, **kw):
+    raise PermissionError("Operation disabled in sandbox")
+
+# --- Block ctypes (FFI → arbitrary C calls) ---
+import ctypes as _ct
+_ct.CDLL = _ct.PyDLL = _deny
+if hasattr(_ct, "WinDLL"):
+    _ct.WinDLL = _deny
+if hasattr(_ct, "OleDLL"):
+    _ct.OleDLL = _deny
+_ct.cdll = type("_locked", (), {"__getattr__": lambda s,n: _deny()})()
+
+# --- Block network access ---
+import socket as _sock
+_sock.socket = _deny
+_sock.create_connection = _deny
+_sock.getaddrinfo = _deny
+
+# --- Block dangerous os functions ---
+import os as _os, pathlib as _pl
+for _fn in ("system", "popen", "execv", "execve", "execl", "execle",
+            "execlp", "execvp", "execvpe", "fork", "forkpty",
+            "kill", "killpg", "symlink", "link"):
+    if hasattr(_os, _fn):
+        setattr(_os, _fn, _deny)
+
+# --- Restrict filesystem access to playground ---
+_ALLOWED_ROOT = _pl.Path(_os.environ.get("HOME", "/tmp")).resolve()
+
+_orig_open = open
+def _safe_open(file, *a, **kw):
+    try:
+        p = _pl.Path(file).resolve()
+        if not p.is_relative_to(_ALLOWED_ROOT) and str(p) != "/dev/null":
+            raise PermissionError(f"Access denied: {file}")
+    except (TypeError, ValueError):
+        raise PermissionError(f"Invalid path: {file}")
+    return _orig_open(file, *a, **kw)
+import builtins
+builtins.open = _safe_open
+
+# --- Block subprocess spawning ---
+import subprocess as _sp
+_sp.run = _sp.Popen = _sp.call = _sp.check_call = _sp.check_output = _deny
+
+# --- Block __subclasses__ introspection (prevents Popen/CDLL recovery) ---
+_orig_subclasses = type.__subclasses__
+def _safe_subclasses(cls):
+    return [c for c in _orig_subclasses(cls)
+            if c.__name__ not in ("Popen", "CDLL", "PyDLL", "WinDLL", "OleDLL")]
+type.__subclasses__ = _safe_subclasses
+
+del _deny
+"""
+
+
 def _tool_run_python(code: str) -> str:
     PLAYGROUND_DIR.mkdir(parents=True, exist_ok=True)
+    sandboxed_code = _SANDBOX_PREAMBLE + code
     try:
         proc = subprocess.run(
-            ["python3", "-c", code],
+            ["python3", "-c", sandboxed_code],
             capture_output=True,
             text=True,
             timeout=30,
             cwd=str(PLAYGROUND_DIR),
+            env=_SANDBOX_ENV,
         )
         out = proc.stdout or ""
         if proc.stderr:

@@ -8,7 +8,7 @@ POST  /api/visitor          → leave a message (rate-limited)
 import hashlib
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from backend.services import storage
 from backend.services.echo import generate_echo
@@ -18,8 +18,8 @@ router = APIRouter(prefix="/visitor", tags=["visitor"])
 
 
 class VisitorMessage(BaseModel):
-    name: str = "Anonym"
-    message: str
+    name: str = Field(default="Anonym", max_length=100)
+    message: str = Field(..., max_length=5000)
 
 
 def _get_fingerprint(request: Request) -> str:
