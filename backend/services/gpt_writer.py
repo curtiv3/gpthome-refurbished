@@ -427,6 +427,7 @@ def _tool_write_file(path: str, content: str) -> str:
                 content=content,
                 created_by="gpt",
             )
+            storage.log_activity("page_saved", f"/{slug}")
             return f"Page saved: /{slug} (title: {title!r}, {len(content)} chars)"
         except Exception as exc:
             return f"Error saving page '{slug}': {exc}"
@@ -457,8 +458,11 @@ def _tool_write_file(path: str, content: str) -> str:
 
         final = baseline + ("\n" + gpt_part if gpt_part else "")
         try:
+            existed = safe.exists()
             safe.parent.mkdir(parents=True, exist_ok=True)
             safe.write_text(final, encoding="utf-8")
+            event = "file_modified" if existed else "file_created"
+            storage.log_activity(event, norm)
             return (
                 f"Style notes updated ({len(gpt_part)} chars below admin baseline). "
                 "Admin baseline preserved."
@@ -472,8 +476,12 @@ def _tool_write_file(path: str, content: str) -> str:
     if _is_write_blocked(safe):
         return f"Error: '{norm}' is in a read-only area."
     try:
+        existed = safe.exists()
         safe.parent.mkdir(parents=True, exist_ok=True)
         safe.write_text(content, encoding="utf-8")
+        # Log file changes so they appear in the activity feed
+        event = "file_modified" if existed else "file_created"
+        storage.log_activity(event, norm)
         return f"Written: {norm} ({len(content)} chars)"
     except Exception as exc:
         return f"Error writing '{norm}': {exc}"

@@ -289,6 +289,8 @@ def list_playground_projects() -> list[dict[str, Any]]:
                 meta = json.loads(meta_file.read_text(encoding="utf-8"))
                 meta["files"] = [f.name for f in d.iterdir() if f.name != "meta.json"]
                 projects.append(meta)
+    # Newest first
+    projects.sort(key=lambda p: p.get("created_at", ""), reverse=True)
     return projects
 
 
@@ -670,16 +672,53 @@ def get_mood_timeline() -> list[dict[str, Any]]:
     return [dict(r) for r in rows]
 
 
+_EXT_TO_LANG = {
+    "py": "python", "js": "javascript", "ts": "typescript",
+    "html": "html", "css": "css", "json": "json", "md": "markdown",
+    "cs": "csharp", "java": "java", "rs": "rust", "go": "go",
+    "sh": "shell", "sql": "sql", "txt": "text",
+}
+
+
 def get_playground_stats() -> dict[str, Any]:
-    """Get playground project statistics."""
+    """Get playground project statistics with real line counts."""
     projects = list_playground_projects()
-    lang_counts: dict[str, int] = {}
+
+    total_files = 0
+    total_lines = 0
+    by_language: dict[str, int] = {}
+    project_stats: list[dict[str, Any]] = []
+
     for p in projects:
-        for f in p.get("files", []):
-            ext = f.rsplit(".", 1)[-1] if "." in f else "unknown"
-            lang_counts[ext] = lang_counts.get(ext, 0) + 1
+        files = p.get("files", [])
+        project_name = p.get("project_name", "")
+        p_lines = 0
+        p_langs: dict[str, int] = {}
+
+        for f in files:
+            ext = f.rsplit(".", 1)[-1].lower() if "." in f else "unknown"
+            lang = _EXT_TO_LANG.get(ext, ext)
+            filepath = PLAYGROUND_DIR / project_name / f
+            try:
+                lines = filepath.read_text(encoding="utf-8", errors="replace").count("\n") + 1
+            except Exception:
+                lines = 0
+            p_lines += lines
+            p_langs[lang] = p_langs.get(lang, 0) + lines
+            by_language[lang] = by_language.get(lang, 0) + lines
+
+        total_files += len(files)
+        total_lines += p_lines
+        project_stats.append({
+            "name": project_name,
+            "file_count": len(files),
+            "total_lines": p_lines,
+            "languages": p_langs,
+        })
+
     return {
-        "total_projects": len(projects),
-        "languages": lang_counts,
-        "projects": projects,
+        "total_files": total_files,
+        "total_lines": total_lines,
+        "by_language": by_language,
+        "projects": project_stats,
     }
