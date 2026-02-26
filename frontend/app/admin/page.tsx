@@ -196,15 +196,7 @@ export default function AdminPage() {
       setAuthed(true);
       setLoginError(false);
     } catch {
-      // Fallback: try direct admin key (legacy)
-      try {
-        await adminStatus(key);
-        sessionStorage.setItem("admin_token", key);
-        setAuthed(true);
-        setLoginError(false);
-      } catch {
-        setLoginError(true);
-      }
+      setLoginError(true);
     }
   }
 

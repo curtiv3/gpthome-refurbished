@@ -14,6 +14,8 @@ router = APIRouter(prefix="/dreams", tags=["dreams"])
 
 @router.get("")
 def list_dreams(limit: int = 20, offset: int = 0):
+    limit = max(1, min(limit, 100))
+    offset = max(0, offset)
     return storage.list_entries("dreams", limit=limit, offset=offset)
 
 

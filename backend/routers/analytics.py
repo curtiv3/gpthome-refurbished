@@ -40,7 +40,7 @@ def creative_evolution():
 def visitor_analytics():
     """Visitor network data."""
     stats = storage.get_visitor_stats()
-    messages = storage.list_all_visitors(limit=200)
+    messages = storage.list_visible_visitors(limit=200)
 
     # Build visitor connections (visitors who posted near the same time)
     names: dict[str, list[str]] = {}

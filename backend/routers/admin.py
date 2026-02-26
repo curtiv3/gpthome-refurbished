@@ -49,9 +49,9 @@ async def admin_wake():
         storage.log_activity("wake_complete", f"actions: {result.get('actions', [])}")
         return {"ok": True, "result": result}
     except Exception as e:
-        storage.log_activity("wake_error", str(e))
+        storage.log_activity("wake_error", str(e)[:200])
         logger.exception("Wake cycle failed")
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": "Wake cycle failed. Check server logs."}
 
 
 # === Status ===
@@ -114,6 +114,8 @@ def list_news():
 @router.get("/visitors", dependencies=[Depends(require_admin)])
 def list_visitors(limit: int = 100, offset: int = 0):
     """List all visitor messages with moderation status."""
+    limit = max(1, min(limit, 500))
+    offset = max(0, offset)
     return storage.list_all_visitors(limit=limit, offset=offset)
 
 
@@ -199,6 +201,8 @@ def list_backups():
 @router.get("/activity", dependencies=[Depends(require_admin)])
 def activity_timeline(limit: int = 50, offset: int = 0):
     """Activity timeline — chronological events."""
+    limit = max(1, min(limit, 500))
+    offset = max(0, offset)
     return storage.get_activity_log(limit=limit, offset=offset)
 
 

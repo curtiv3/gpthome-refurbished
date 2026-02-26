@@ -12,7 +12,7 @@ All methods return a session token for subsequent API calls.
 import hmac
 import logging
 import time
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 
 import httpx
 import pyotp
@@ -21,6 +21,7 @@ from pydantic import BaseModel
 
 from backend.config import (
     ADMIN_SECRET,
+    CORS_ORIGINS,
     GITHUB_CLIENT_ID,
     GITHUB_CLIENT_SECRET,
     ADMIN_GITHUB_USERNAMES,
@@ -37,13 +38,30 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 _LOGIN_WINDOW = 300          # 5 minutes
 _LOGIN_MAX_ATTEMPTS = 5      # max attempts in window
+_LOGIN_MAX_IPS = 1000        # max tracked IPs (prevent unbounded growth)
 _login_attempts: dict[str, list[float]] = {}
+_login_last_cleanup = 0.0
 
 
 def _check_login_rate(request: Request):
     """Block brute-force attempts on auth endpoints."""
+    global _login_last_cleanup
     ip = request.client.host if request.client else "unknown"
     now = time.time()
+
+    # Periodic cleanup: remove stale IPs every 60 seconds
+    if now - _login_last_cleanup > 60:
+        _login_last_cleanup = now
+        stale = [k for k, v in _login_attempts.items()
+                 if not v or now - v[-1] > _LOGIN_WINDOW]
+        for k in stale:
+            del _login_attempts[k]
+        # Hard cap: if still over limit, drop oldest entries
+        if len(_login_attempts) > _LOGIN_MAX_IPS:
+            oldest = sorted(_login_attempts, key=lambda k: _login_attempts[k][-1])
+            for k in oldest[:len(_login_attempts) - _LOGIN_MAX_IPS]:
+                del _login_attempts[k]
+
     attempts = [t for t in _login_attempts.get(ip, []) if now - t < _LOGIN_WINDOW]
     if len(attempts) >= _LOGIN_MAX_ATTEMPTS:
         raise HTTPException(
@@ -107,11 +125,20 @@ def login_with_key(data: SecretKeyLogin):
 # === GitHub OAuth ===
 
 
+# Precompute allowed redirect hosts from CORS_ORIGINS
+_ALLOWED_REDIRECT_HOSTS = {urlparse(o.strip()).netloc for o in CORS_ORIGINS if o.strip()}
+
+
 @router.get("/github")
 def github_login(redirect_uri: str = Query(...)):
     """Redirect to GitHub OAuth authorization page."""
     if not GITHUB_CLIENT_ID or not GITHUB_CLIENT_SECRET:
         raise HTTPException(status_code=501, detail="GitHub OAuth not configured")
+
+    # Validate redirect_uri against allowed origins to prevent open redirect
+    parsed = urlparse(redirect_uri)
+    if parsed.netloc not in _ALLOWED_REDIRECT_HOSTS:
+        raise HTTPException(status_code=400, detail="Invalid redirect URI")
 
     params = urlencode({
         "client_id": GITHUB_CLIENT_ID,
@@ -123,10 +150,15 @@ def github_login(redirect_uri: str = Query(...)):
 
 
 @router.post("/github/callback")
-async def github_callback(code: str = Query(...), state: str = Query("")):
+async def github_callback(code: str = Query(...), state: str = Query(...)):
     """Exchange GitHub code for access token, verify user, return session."""
     if not GITHUB_CLIENT_ID or not GITHUB_CLIENT_SECRET:
         raise HTTPException(status_code=501, detail="GitHub OAuth not configured")
+
+    # Validate state against a pending session (CSRF protection)
+    if not state or not storage.validate_session(state):
+        raise HTTPException(status_code=400, detail="Invalid or expired OAuth state")
+    storage.delete_session(state)
 
     # Exchange code for token
     async with httpx.AsyncClient() as client:
@@ -160,10 +192,6 @@ async def github_callback(code: str = Query(...), state: str = Query("")):
         storage.log_activity("github_login_rejected", f"username={username}")
         raise HTTPException(status_code=403, detail="User not authorized as admin")
 
-    # Clean up pending session
-    if state:
-        storage.delete_session(state)
-
     # Create real session
     session_token = storage.create_session(f"github:{username}")
     storage.log_activity("admin_login", f"method=github, user={username}")
@@ -173,7 +201,7 @@ async def github_callback(code: str = Query(...), state: str = Query("")):
 # === TOTP 2FA ===
 
 
-@router.post("/totp/setup")
+@router.post("/totp/setup", dependencies=[Depends(_check_login_rate)])
 def totp_setup(x_admin_key: str = Header(...)):
     """Generate TOTP secret for initial setup. Requires admin key to set up."""
     if not hmac.compare_digest(x_admin_key, ADMIN_SECRET):
@@ -193,7 +221,7 @@ def totp_setup(x_admin_key: str = Header(...)):
     return {"secret": secret, "uri": uri}
 
 
-@router.post("/totp/reset")
+@router.post("/totp/reset", dependencies=[Depends(_check_login_rate)])
 def totp_reset(x_admin_key: str = Header(...)):
     """Reset TOTP secret. Requires admin key."""
     if not hmac.compare_digest(x_admin_key, ADMIN_SECRET):

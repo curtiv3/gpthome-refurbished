@@ -218,7 +218,8 @@ _TOOLS: list[dict] = [
 def _resolve_safe(raw: str):
     """
     Resolve a user-supplied relative path against DATA_DIR.
-    Returns None if the path escapes DATA_DIR or contains suspicious chars.
+    Returns None if the path escapes DATA_DIR, contains suspicious chars,
+    or involves symlinks that point outside DATA_DIR.
     """
     if not raw or not isinstance(raw, str):
         return None
@@ -228,6 +229,12 @@ def _resolve_safe(raw: str):
         resolved = (DATA_DIR / raw).resolve()
         if not resolved.is_relative_to(DATA_DIR.resolve()):
             return None
+        # Block symlinks that could point outside DATA_DIR
+        candidate = DATA_DIR / raw
+        if candidate.exists() and candidate.is_symlink():
+            link_target = candidate.resolve(strict=True)
+            if not link_target.is_relative_to(DATA_DIR.resolve()):
+                return None
         return resolved
     except Exception:
         return None
@@ -500,11 +507,57 @@ _SANDBOX_ENV = {
 }
 
 
+# Sandbox preamble: block network access and restrict filesystem to playground.
+# Injected before every user script to prevent exfiltration and reading secrets.
+_SANDBOX_PREAMBLE = """\
+import importlib, types as _t
+
+# --- Block network access ---
+def _deny_network(*a, **kw):
+    raise PermissionError("Network access is disabled in the sandbox")
+
+import socket as _sock
+_sock.socket = lambda *a, **kw: (_ for _ in ()).throw(PermissionError("Network access is disabled in the sandbox"))
+_sock.create_connection = _deny_network
+_sock.getaddrinfo = _deny_network
+
+# --- Restrict filesystem access to playground ---
+import os as _os, pathlib as _pl
+_ALLOWED_ROOT = _pl.Path(_os.environ.get("HOME", "/tmp")).resolve()
+
+_orig_open = open
+def _safe_open(file, *a, **kw):
+    try:
+        p = _pl.Path(file).resolve()
+        if not p.is_relative_to(_ALLOWED_ROOT) and str(p) != "/dev/null":
+            raise PermissionError(f"Access denied: {file}")
+    except (TypeError, ValueError):
+        pass
+    return _orig_open(file, *a, **kw)
+import builtins
+builtins.open = _safe_open
+
+# Block os.symlink to prevent symlink attacks
+if hasattr(_os, "symlink"):
+    _os.symlink = lambda *a, **kw: (_ for _ in ()).throw(PermissionError("symlink creation is disabled"))
+# Block subprocess spawning
+import subprocess as _sp
+_sp.run = _deny_network
+_sp.Popen = _deny_network
+_sp.call = _deny_network
+_sp.check_call = _deny_network
+_sp.check_output = _deny_network
+
+del _deny_network, _t
+"""
+
+
 def _tool_run_python(code: str) -> str:
     PLAYGROUND_DIR.mkdir(parents=True, exist_ok=True)
+    sandboxed_code = _SANDBOX_PREAMBLE + code
     try:
         proc = subprocess.run(
-            ["python3", "-c", code],
+            ["python3", "-c", sandboxed_code],
             capture_output=True,
             text=True,
             timeout=30,

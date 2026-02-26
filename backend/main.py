@@ -32,14 +32,14 @@ async def lifespan(app: FastAPI):
     init_db()
     mode = "MOCK (kein API Key)" if MOCK_MODE else "LIVE"
     logger.info("GPT's Home startet... [%s]", mode)
-    if ADMIN_SECRET == "change-me-in-production":
+    if not ADMIN_SECRET or ADMIN_SECRET == "change-me-in-production":
         logger.warning(
-            "ADMIN_SECRET is still the default! "
+            "ADMIN_SECRET is missing or still the default! "
             "Set a strong secret via the ADMIN_SECRET environment variable."
         )
         if not MOCK_MODE:
             logger.critical(
-                "Refusing to start in LIVE mode with default ADMIN_SECRET. "
+                "Refusing to start in LIVE mode with default/empty ADMIN_SECRET. "
                 "Set ADMIN_SECRET to a secure value."
             )
             raise SystemExit(1)
