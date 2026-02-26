@@ -9,6 +9,7 @@ Supports three authentication methods:
 All methods return a session token for subsequent API calls.
 """
 
+import hmac
 import logging
 import time
 from urllib.parse import urlencode
@@ -77,7 +78,7 @@ async def require_admin_auth(
     - Authorization: Bearer <session_token>  (OAuth/TOTP session)
     """
     # Check secret key
-    if x_admin_key and x_admin_key == ADMIN_SECRET:
+    if x_admin_key and hmac.compare_digest(x_admin_key, ADMIN_SECRET):
         return
 
     # Check session token
@@ -95,7 +96,7 @@ async def require_admin_auth(
 @router.post("/login", dependencies=[Depends(_check_login_rate)])
 def login_with_key(data: SecretKeyLogin):
     """Login with admin secret key. Returns a session token."""
-    if data.key != ADMIN_SECRET:
+    if not hmac.compare_digest(data.key, ADMIN_SECRET):
         raise HTTPException(status_code=403, detail="Invalid key")
 
     token = storage.create_session("secret_key")
@@ -175,7 +176,7 @@ async def github_callback(code: str = Query(...), state: str = Query("")):
 @router.post("/totp/setup")
 def totp_setup(x_admin_key: str = Header(...)):
     """Generate TOTP secret for initial setup. Requires admin key to set up."""
-    if x_admin_key != ADMIN_SECRET:
+    if not hmac.compare_digest(x_admin_key, ADMIN_SECRET):
         raise HTTPException(status_code=403, detail="Admin key required for TOTP setup")
 
     existing = storage.get_setting("totp_secret")
@@ -195,7 +196,7 @@ def totp_setup(x_admin_key: str = Header(...)):
 @router.post("/totp/reset")
 def totp_reset(x_admin_key: str = Header(...)):
     """Reset TOTP secret. Requires admin key."""
-    if x_admin_key != ADMIN_SECRET:
+    if not hmac.compare_digest(x_admin_key, ADMIN_SECRET):
         raise HTTPException(status_code=403, detail="Admin key required")
 
     secret = pyotp.random_base32()
