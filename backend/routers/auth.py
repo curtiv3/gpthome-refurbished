@@ -10,12 +10,12 @@ All methods return a session token for subsequent API calls.
 """
 
 import logging
+import time
 from urllib.parse import urlencode
 
 import httpx
 import pyotp
-from fastapi import APIRouter, Header, HTTPException, Query
-from fastapi.responses import RedirectResponse
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from backend.config import (
@@ -30,6 +30,27 @@ from backend.services import storage
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+
+# --- Login rate limiter (in-memory, per IP) ---
+
+_LOGIN_WINDOW = 300          # 5 minutes
+_LOGIN_MAX_ATTEMPTS = 5      # max attempts in window
+_login_attempts: dict[str, list[float]] = {}
+
+
+def _check_login_rate(request: Request):
+    """Block brute-force attempts on auth endpoints."""
+    ip = request.client.host if request.client else "unknown"
+    now = time.time()
+    attempts = [t for t in _login_attempts.get(ip, []) if now - t < _LOGIN_WINDOW]
+    if len(attempts) >= _LOGIN_MAX_ATTEMPTS:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many login attempts. Try again later.",
+        )
+    attempts.append(now)
+    _login_attempts[ip] = attempts
 
 
 # --- Models ---
@@ -71,7 +92,7 @@ async def require_admin_auth(
 # === Secret Key Login ===
 
 
-@router.post("/login")
+@router.post("/login", dependencies=[Depends(_check_login_rate)])
 def login_with_key(data: SecretKeyLogin):
     """Login with admin secret key. Returns a session token."""
     if data.key != ADMIN_SECRET:
@@ -187,7 +208,7 @@ def totp_reset(x_admin_key: str = Header(...)):
     return {"secret": secret, "uri": uri}
 
 
-@router.post("/totp/verify")
+@router.post("/totp/verify", dependencies=[Depends(_check_login_rate)])
 def totp_verify(data: TOTPVerify):
     """Verify TOTP code and return session token."""
     secret = storage.get_setting("totp_secret")

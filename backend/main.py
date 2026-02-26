@@ -8,12 +8,13 @@ and provides a manual wake-up endpoint for testing.
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend import scheduler
-from backend.config import API_PREFIX, CORS_ORIGINS, MOCK_MODE
+from backend.config import ADMIN_SECRET, API_PREFIX, CORS_ORIGINS, MOCK_MODE
 from backend.routers import admin, analytics, auth, dreams, echoes, pages, playground, thoughts, visitor
+from backend.routers.auth import require_admin_auth
 from backend.services.gpt_mind import wake_up
 from backend.services.storage import init_db, read_memory, count_entries
 
@@ -31,6 +32,17 @@ async def lifespan(app: FastAPI):
     init_db()
     mode = "MOCK (kein API Key)" if MOCK_MODE else "LIVE"
     logger.info("GPT's Home startet... [%s]", mode)
+    if ADMIN_SECRET == "change-me-in-production":
+        logger.warning(
+            "ADMIN_SECRET is still the default! "
+            "Set a strong secret via the ADMIN_SECRET environment variable."
+        )
+        if not MOCK_MODE:
+            logger.critical(
+                "Refusing to start in LIVE mode with default ADMIN_SECRET. "
+                "Set ADMIN_SECRET to a secure value."
+            )
+            raise SystemExit(1)
     if MOCK_MODE:
         logger.info("Tipp: 'python -m backend.seed' für Demo-Daten, POST /api/wake zum Testen")
     scheduler.start()
@@ -49,8 +61,8 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Admin-Key"],
 )
 
 # --- Routers ---
@@ -94,8 +106,8 @@ def status():
     }
 
 
-@app.post("/api/wake")
+@app.post("/api/wake", dependencies=[Depends(require_admin_auth)])
 async def manual_wake():
-    """Manually trigger a wake cycle (for testing)."""
+    """Manually trigger a wake cycle. Requires admin authentication."""
     result = await wake_up()
     return result

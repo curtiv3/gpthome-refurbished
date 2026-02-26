@@ -225,9 +225,8 @@ def _resolve_safe(raw: str):
     if "\x00" in raw or "~" in raw:
         return None
     try:
-        from pathlib import Path
         resolved = (DATA_DIR / raw).resolve()
-        if not str(resolved).startswith(str(DATA_DIR.resolve())):
+        if not resolved.is_relative_to(DATA_DIR.resolve()):
             return None
         return resolved
     except Exception:
@@ -487,6 +486,16 @@ def _tool_write_file(path: str, content: str) -> str:
         return f"Error writing '{norm}': {exc}"
 
 
+# Minimal environment for sandboxed Python execution.
+# Strips all secrets (OPENAI_API_KEY, ADMIN_SECRET, etc.).
+_SANDBOX_ENV = {
+    "PATH": "/usr/local/bin:/usr/bin:/bin",
+    "HOME": str(PLAYGROUND_DIR),
+    "LANG": "en_US.UTF-8",
+    "PYTHONDONTWRITEBYTECODE": "1",
+}
+
+
 def _tool_run_python(code: str) -> str:
     PLAYGROUND_DIR.mkdir(parents=True, exist_ok=True)
     try:
@@ -496,6 +505,7 @@ def _tool_run_python(code: str) -> str:
             text=True,
             timeout=30,
             cwd=str(PLAYGROUND_DIR),
+            env=_SANDBOX_ENV,
         )
         out = proc.stdout or ""
         if proc.stderr:
