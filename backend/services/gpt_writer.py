@@ -488,11 +488,15 @@ def _tool_write_file(path: str, content: str) -> str:
 
 # Minimal environment for sandboxed Python execution.
 # Strips all secrets (OPENAI_API_KEY, ADMIN_SECRET, etc.).
+# Minimal environment for sandboxed Python execution.
+# Strips all secrets (OPENAI_API_KEY, ADMIN_SECRET, etc.).
+# PYTHONPATH empty to prevent importing from unexpected locations.
 _SANDBOX_ENV = {
     "PATH": "/usr/local/bin:/usr/bin:/bin",
     "HOME": str(PLAYGROUND_DIR),
     "LANG": "en_US.UTF-8",
     "PYTHONDONTWRITEBYTECODE": "1",
+    "PYTHONPATH": "",
 }
 
 

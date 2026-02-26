@@ -269,10 +269,14 @@ def save_memory(memory: dict[str, Any]) -> None:
 
 
 def save_raw_file(project_name: str, filename: str, content: str):
-    """Save a raw file to a playground project."""
-    directory = PLAYGROUND_DIR / project_name
+    """Save a raw file to a playground project (path-traversal safe)."""
+    directory = (PLAYGROUND_DIR / project_name).resolve()
+    if not directory.is_relative_to(PLAYGROUND_DIR.resolve()):
+        raise ValueError(f"Invalid project name: {project_name!r}")
     directory.mkdir(parents=True, exist_ok=True)
-    filepath = directory / filename
+    filepath = (directory / filename).resolve()
+    if not filepath.is_relative_to(directory):
+        raise ValueError(f"Invalid filename: {filename!r}")
     filepath.write_text(content, encoding="utf-8")
     return filepath
 
@@ -295,8 +299,10 @@ def list_playground_projects() -> list[dict[str, Any]]:
 
 
 def get_playground_file(project_name: str, filename: str) -> str | None:
-    """Read a single file from a playground project."""
-    filepath = PLAYGROUND_DIR / project_name / filename
+    """Read a single file from a playground project (path-traversal safe)."""
+    filepath = (PLAYGROUND_DIR / project_name / filename).resolve()
+    if not filepath.is_relative_to(PLAYGROUND_DIR.resolve()):
+        return None
     if not filepath.exists():
         return None
     return filepath.read_text(encoding="utf-8")
