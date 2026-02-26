@@ -417,7 +417,7 @@ def _tool_write_file(path: str, content: str) -> str:
         from pathlib import PurePosixPath
         filename = PurePosixPath(norm).name          # e.g. "my-page.md"
         slug = filename.removesuffix(".md").strip()
-        if not slug or slug in _PROTECTED_PAGE_SLUGS:
+        if not slug or slug.lower() in _PROTECTED_PAGE_SLUGS:
             return f"Error: '{slug}' is a protected or invalid page slug."
         # Extract title from first H1 line, fall back to slug
         title = slug.replace("-", " ").title()
@@ -507,22 +507,37 @@ _SANDBOX_ENV = {
 }
 
 
-# Sandbox preamble: block network access and restrict filesystem to playground.
+# Sandbox preamble: block network access, filesystem escape, process spawning,
+# ctypes FFI, os.system/exec, and __subclasses__ introspection.
 # Injected before every user script to prevent exfiltration and reading secrets.
 _SANDBOX_PREAMBLE = """\
-import importlib, types as _t
+def _deny(*a, **kw):
+    raise PermissionError("Operation disabled in sandbox")
+
+# --- Block ctypes (FFI → arbitrary C calls) ---
+import ctypes as _ct
+_ct.CDLL = _ct.PyDLL = _deny
+if hasattr(_ct, "WinDLL"):
+    _ct.WinDLL = _deny
+if hasattr(_ct, "OleDLL"):
+    _ct.OleDLL = _deny
+_ct.cdll = type("_locked", (), {"__getattr__": lambda s,n: _deny()})()
 
 # --- Block network access ---
-def _deny_network(*a, **kw):
-    raise PermissionError("Network access is disabled in the sandbox")
-
 import socket as _sock
-_sock.socket = lambda *a, **kw: (_ for _ in ()).throw(PermissionError("Network access is disabled in the sandbox"))
-_sock.create_connection = _deny_network
-_sock.getaddrinfo = _deny_network
+_sock.socket = _deny
+_sock.create_connection = _deny
+_sock.getaddrinfo = _deny
+
+# --- Block dangerous os functions ---
+import os as _os, pathlib as _pl
+for _fn in ("system", "popen", "execv", "execve", "execl", "execle",
+            "execlp", "execvp", "execvpe", "fork", "forkpty",
+            "kill", "killpg", "symlink", "link"):
+    if hasattr(_os, _fn):
+        setattr(_os, _fn, _deny)
 
 # --- Restrict filesystem access to playground ---
-import os as _os, pathlib as _pl
 _ALLOWED_ROOT = _pl.Path(_os.environ.get("HOME", "/tmp")).resolve()
 
 _orig_open = open
@@ -532,23 +547,23 @@ def _safe_open(file, *a, **kw):
         if not p.is_relative_to(_ALLOWED_ROOT) and str(p) != "/dev/null":
             raise PermissionError(f"Access denied: {file}")
     except (TypeError, ValueError):
-        pass
+        raise PermissionError(f"Invalid path: {file}")
     return _orig_open(file, *a, **kw)
 import builtins
 builtins.open = _safe_open
 
-# Block os.symlink to prevent symlink attacks
-if hasattr(_os, "symlink"):
-    _os.symlink = lambda *a, **kw: (_ for _ in ()).throw(PermissionError("symlink creation is disabled"))
-# Block subprocess spawning
+# --- Block subprocess spawning ---
 import subprocess as _sp
-_sp.run = _deny_network
-_sp.Popen = _deny_network
-_sp.call = _deny_network
-_sp.check_call = _deny_network
-_sp.check_output = _deny_network
+_sp.run = _sp.Popen = _sp.call = _sp.check_call = _sp.check_output = _deny
 
-del _deny_network, _t
+# --- Block __subclasses__ introspection (prevents Popen/CDLL recovery) ---
+_orig_subclasses = type.__subclasses__
+def _safe_subclasses(cls):
+    return [c for c in _orig_subclasses(cls)
+            if c.__name__ not in ("Popen", "CDLL", "PyDLL", "WinDLL", "OleDLL")]
+type.__subclasses__ = _safe_subclasses
+
+del _deny
 """
 
 
