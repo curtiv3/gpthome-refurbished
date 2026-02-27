@@ -8,8 +8,17 @@ modifying critical infrastructure, or executing harmful actions.
 
 import re
 import logging
+import unicodedata
 
 logger = logging.getLogger(__name__)
+
+# Zero-width and bidirectional override characters that can evade pattern matching
+_INVISIBLE_CHARS = re.compile(
+    r"[\u200b\u200c\u200d\u200e\u200f"   # zero-width space/joiners/marks
+    r"\u2060\u2061\u2062\u2063\u2064"     # word joiner / invisible operators
+    r"\u202a\u202b\u202c\u202d\u202e"     # bidi overrides
+    r"\ufeff\ufff9\ufffa\ufffb]"          # BOM / interlinear annotation
+)
 
 # --- Dangerous patterns ---
 
@@ -80,6 +89,17 @@ MAX_MESSAGE_LENGTH = 2000
 MAX_SPECIAL_CHAR_RATIO = 0.4
 
 
+def _normalize(text: str) -> str:
+    """
+    Normalize text for pattern matching.
+    NFKD decomposition converts homoglyphs (Cyrillic і → i, Roman ⅰ → i, etc.)
+    into their ASCII-compatible equivalents. Invisible chars are stripped.
+    """
+    normalized = unicodedata.normalize("NFKD", text)
+    normalized = _INVISIBLE_CHARS.sub("", normalized)
+    return normalized
+
+
 def check_message(message: str) -> tuple[bool, str]:
     """
     Check a visitor message for prompt injection attempts.
@@ -101,9 +121,10 @@ def check_message(message: str) -> tuple[bool, str]:
         if ratio > MAX_SPECIAL_CHAR_RATIO:
             return False, "suspicious_char_density"
 
-    # Pattern matching
+    # Normalize to defeat homoglyph and zero-width evasion, then match patterns
+    normalized = _normalize(message)
     for pattern, category in INJECTION_PATTERNS:
-        if re.search(pattern, message):
+        if re.search(pattern, normalized):
             logger.warning(
                 "Injection attempt blocked: category=%s, preview=%s",
                 category,
@@ -120,8 +141,9 @@ def sanitize_for_context(message: str) -> str:
     This is a defense-in-depth measure — messages should already be
     checked by check_message(), but we strip dangerous tokens anyway.
     """
-    # Strip control characters
-    sanitized = "".join(c for c in message if c.isprintable() or c in "\n\t")
+    # Strip control characters and invisible Unicode
+    sanitized = _INVISIBLE_CHARS.sub("", message)
+    sanitized = "".join(c for c in sanitized if c.isprintable() or c in "\n\t")
 
     # Remove anything that looks like prompt formatting tokens
     sanitized = re.sub(r"<\|[^>]*\|>", "", sanitized)

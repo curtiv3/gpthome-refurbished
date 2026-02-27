@@ -248,7 +248,7 @@ def _build_context(
     if new_visitors:
         parts.append(f"\n## New visitors ({len(new_visitors)} since your last wake):")
         for v in new_visitors:
-            name = v.get("name", "Anonymous")
+            name = sanitize_for_context(v.get("name", "Anonymous"))
             msg = sanitize_for_context(v.get("message", ""))
             parts.append(f"- **{name}** (id: {v.get('id', '?')}): \"{msg}\"")
     else:
