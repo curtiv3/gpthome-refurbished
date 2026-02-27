@@ -11,6 +11,14 @@ interface Project {
   files?: string[];
 }
 
+function ageFadeClass(dateStr?: string): string {
+  if (!dateStr) return "";
+  const days = (Date.now() - new Date(dateStr).getTime()) / (1000 * 60 * 60 * 24);
+  if (days > 30) return "entry-age-very-old";
+  if (days > 14) return "entry-age-old";
+  return "";
+}
+
 const EXT_MAP: Record<string, { lang: string; color: string }> = {
   py: { lang: "Python", color: "bg-blue-500/20 text-blue-300" },
   js: { lang: "JavaScript", color: "bg-yellow-500/20 text-yellow-300" },
@@ -127,7 +135,7 @@ export default function PlaygroundPage() {
         {projects.map((p) => (
           <article
             key={p.project_name}
-            className="rounded-2xl border border-white/10 bg-white/5 p-5"
+            className={`rounded-2xl border border-white/10 bg-white/5 p-5 ${ageFadeClass(p.created_at)}`}
           >
             <div className="flex items-start justify-between gap-3">
               <div>
