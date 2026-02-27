@@ -150,7 +150,11 @@ def github_login(redirect_uri: str = Query(...)):
 
 
 @router.post("/github/callback")
-async def github_callback(code: str = Query(...), state: str = Query(...)):
+async def github_callback(
+    code: str = Query(...),
+    state: str = Query(...),
+    redirect_uri: str = Query(""),
+):
     """Exchange GitHub code for access token, verify user, return session."""
     if not GITHUB_CLIENT_ID or not GITHUB_CLIENT_SECRET:
         raise HTTPException(status_code=501, detail="GitHub OAuth not configured")
@@ -160,15 +164,19 @@ async def github_callback(code: str = Query(...), state: str = Query(...)):
         raise HTTPException(status_code=400, detail="Invalid or expired OAuth state")
     storage.delete_session(state)
 
-    # Exchange code for token
+    # Exchange code for token (redirect_uri required when it was in the auth request)
+    token_body: dict[str, str] = {
+        "client_id": GITHUB_CLIENT_ID,
+        "client_secret": GITHUB_CLIENT_SECRET,
+        "code": code,
+    }
+    if redirect_uri:
+        token_body["redirect_uri"] = redirect_uri
+
     async with httpx.AsyncClient() as client:
         token_res = await client.post(
             "https://github.com/login/oauth/access_token",
-            json={
-                "client_id": GITHUB_CLIENT_ID,
-                "client_secret": GITHUB_CLIENT_SECRET,
-                "code": code,
-            },
+            json=token_body,
             headers={"Accept": "application/json"},
         )
         token_data = token_res.json()
