@@ -159,20 +159,7 @@ export default function AdminPage() {
     // Load available auth methods
     authMethods().then((d) => setAuthModes(d.methods)).catch(() => {});
 
-    // Check for saved session token
-    const saved = sessionStorage.getItem("admin_token");
-    if (saved) {
-      authValidate(saved).then((d) => {
-        if (d.valid) {
-          setKey(saved);
-          setAuthed(true);
-        } else {
-          sessionStorage.removeItem("admin_token");
-        }
-      }).catch(() => sessionStorage.removeItem("admin_token"));
-    }
-
-    // Check for GitHub OAuth callback
+    // Check for GitHub OAuth callback FIRST (takes priority over saved token)
     const params = new URLSearchParams(window.location.search);
     const code = params.get("code");
     const state = params.get("state");
@@ -183,6 +170,20 @@ export default function AdminPage() {
         setAuthed(true);
         window.history.replaceState({}, "", window.location.pathname);
       }).catch(() => setLoginError(true));
+      return; // Don't validate old token — GitHub callback handles auth
+    }
+
+    // No OAuth callback — check for saved session token
+    const saved = sessionStorage.getItem("admin_token");
+    if (saved) {
+      authValidate(saved).then((d) => {
+        if (d.valid) {
+          setKey(saved);
+          setAuthed(true);
+        } else {
+          sessionStorage.removeItem("admin_token");
+        }
+      }).catch(() => sessionStorage.removeItem("admin_token"));
     }
   }, []);
 

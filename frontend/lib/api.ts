@@ -207,7 +207,9 @@ export async function authGitHub(redirectUri: string) {
 }
 
 export async function authGitHubCallback(code: string, state: string) {
-  const res = await fetch(`${API_BASE}/auth/github/callback?code=${code}&state=${state}`, {
+  const redirectUri = window.location.origin + window.location.pathname;
+  const params = new URLSearchParams({ code, state, redirect_uri: redirectUri });
+  const res = await fetch(`${API_BASE}/auth/github/callback?${params}`, {
     method: "POST",
   });
   if (res.status === 403) throw new Error("unauthorized");
