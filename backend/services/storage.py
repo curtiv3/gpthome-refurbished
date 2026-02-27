@@ -299,12 +299,19 @@ def list_playground_projects() -> list[dict[str, Any]]:
                     "description": "",
                 }
             meta["project_name"] = meta.get("project_name", d.name)
-            meta["files"] = [
-                f.name for f in d.iterdir()
+            files = [
+                f for f in d.iterdir()
                 if f.is_file() and f.name != "meta.json"
             ]
-            if not meta["files"]:
+            if not files:
                 continue
+            meta["files"] = [f.name for f in files]
+            # Derive created_at from filesystem if missing
+            if not meta.get("created_at"):
+                earliest = min(f.stat().st_mtime for f in files)
+                meta["created_at"] = datetime.fromtimestamp(
+                    earliest, tz=timezone.utc
+                ).isoformat()
             projects.append(meta)
     # Newest first
     projects.sort(key=lambda p: p.get("created_at", ""), reverse=True)
