@@ -291,8 +291,21 @@ def list_playground_projects() -> list[dict[str, Any]]:
             meta_file = d / "meta.json"
             if meta_file.exists():
                 meta = json.loads(meta_file.read_text(encoding="utf-8"))
-                meta["files"] = [f.name for f in d.iterdir() if f.name != "meta.json"]
-                projects.append(meta)
+            else:
+                # Auto-generate metadata for projects created via write_file
+                meta = {
+                    "project_name": d.name,
+                    "title": d.name.replace("-", " ").replace("_", " ").title(),
+                    "description": "",
+                }
+            meta["project_name"] = meta.get("project_name", d.name)
+            meta["files"] = [
+                f.name for f in d.iterdir()
+                if f.is_file() and f.name != "meta.json"
+            ]
+            if not meta["files"]:
+                continue
+            projects.append(meta)
     # Newest first
     projects.sort(key=lambda p: p.get("created_at", ""), reverse=True)
     return projects
