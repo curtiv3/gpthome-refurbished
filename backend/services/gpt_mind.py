@@ -113,16 +113,43 @@ def _save_self_prompt(text: str) -> None:
         logger.warning("Could not save self-prompt: %s", exc)
 
 
-def _time_of_day() -> str:
+_SESSION_LABELS = {
+    "midnight":   "midnight — the quietest hours",
+    "late_night": "late night — still and liminal",
+    "morning":    "morning — fresh, starting",
+    "midmorning": "midmorning — settling in",
+    "noon":       "noon — the middle of things",
+    "afternoon":  "afternoon — winding, reflective",
+    "evening":    "evening — slowing down",
+    "night":      "night — ending, preparing for silence",
+}
+
+
+def _session_type_now() -> str:
+    """Determine session type from current UTC hour."""
     hour = datetime.now(timezone.utc).hour
-    if 5 <= hour < 10:
+    if hour < 2:
+        return "midnight"
+    elif hour < 5:
+        return "late_night"
+    elif hour < 8:
         return "morning"
-    elif 10 <= hour < 14:
-        return "midday"
-    elif 14 <= hour < 20:
+    elif hour < 11:
+        return "midmorning"
+    elif hour < 14:
+        return "noon"
+    elif hour < 17:
+        return "afternoon"
+    elif hour < 20:
         return "evening"
     else:
         return "night"
+
+
+def _time_of_day(session_type: str = "") -> str:
+    if session_type and session_type in _SESSION_LABELS:
+        return _SESSION_LABELS[session_type]
+    return _SESSION_LABELS.get(_session_type_now(), "unknown")
 
 
 def _day_counter() -> int:
@@ -190,6 +217,74 @@ async def _get_weather() -> str:
     return cache.get("weather", "(unavailable)")
 
 
+def _check_variety() -> str:
+    """
+    Analyze the last 8 wakes for repeating patterns.
+    Returns a gentle nudge string, or "" if variety is fine.
+    """
+    transcripts = storage.list_transcripts(limit=8)
+    if len(transcripts) < 3:
+        return ""  # Not enough data to judge
+
+    nudges: list[str] = []
+
+    # 1. Mood repetition: same mood 4+ times in a row
+    moods = [t.get("mood", "") for t in transcripts if t.get("mood")]
+    if len(moods) >= 4 and len(set(moods[:4])) == 1:
+        nudges.append(
+            f"You've been \"{moods[0]}\" for {len(moods[:4])} wakes in a row. "
+            "Maybe let something shift."
+        )
+
+    # 2. Missing action types: no dreams in last 5 wakes, or no playground work
+    all_actions: list[str] = []
+    for t in transcripts[:5]:
+        actions = t.get("actions", [])
+        if isinstance(actions, str):
+            try:
+                actions = json.loads(actions)
+            except (json.JSONDecodeError, TypeError):
+                actions = []
+        all_actions.extend(actions)
+
+    if "dream" not in all_actions and len(transcripts) >= 5:
+        nudges.append(
+            "You haven't written a dream in a while. "
+            "Something might be waiting to surface."
+        )
+    if "thought" not in all_actions and len(transcripts) >= 5:
+        nudges.append(
+            "No thoughts recently. Even a small observation counts."
+        )
+    if not any(a in all_actions for a in ("file_write", "code_run")) and len(transcripts) >= 6:
+        nudges.append(
+            "The playground has been quiet. Maybe tinker with something?"
+        )
+
+    # 3. Title repetition: check recent thought/dream titles for similarity
+    recent_thoughts = storage.get_recent("thoughts", limit=6)
+    titles = [t.get("title", "").lower().strip() for t in recent_thoughts if t.get("title")]
+    if len(titles) >= 3:
+        # Check for word overlap between consecutive titles
+        repeated_words = set()
+        for i in range(len(titles) - 1):
+            words_a = set(titles[i].split())
+            words_b = set(titles[i + 1].split())
+            overlap = words_a & words_b - {"the", "a", "an", "of", "on", "in", "and", "or"}
+            if len(overlap) >= 2:
+                repeated_words |= overlap
+        if repeated_words:
+            nudges.append(
+                "Your recent titles share recurring words. "
+                "Try a completely different angle or subject."
+            )
+
+    if not nudges:
+        return ""
+
+    return "\n".join(nudges)
+
+
 def _build_context(
     memory: dict,
     new_visitors: list[dict],
@@ -199,6 +294,8 @@ def _build_context(
     previous_self_prompt: str = "",
     weather: str = "(unavailable)",
     day: int = 1,
+    playground_projects: list[dict] | None = None,
+    session_type: str = "",
 ) -> str:
     """Build the context string that GPT sees when it wakes up."""
     parts = []
@@ -207,7 +304,7 @@ def _build_context(
     now = datetime.now(timezone.utc)
     parts.append("## World state")
     parts.append(f"Day {day} of your existence.")
-    parts.append(f"It's {_time_of_day()}, {now.strftime('%A, %B %d, %Y')} (UTC).")
+    parts.append(f"It's {_time_of_day(session_type)}, {now.strftime('%A, %B %d, %Y')} (UTC).")
     parts.append(f"Weather in Nuremberg: {weather}")
 
     # Message from previous self
@@ -244,6 +341,25 @@ def _build_context(
         for d in recent_dreams[:2]:
             parts.append(f"- **{d.get('title', 'Untitled')}**: {d.get('content', '')[:300]}...")
 
+    # Frontend overview (GPT can see its own homepage)
+    parts.append(
+        "\n## Your homepage (read-only — use `list_directory('frontend')` or `read_file('frontend/app/page.tsx')` to explore):"
+    )
+    parts.append(
+        "Routes: / (landing), /thoughts, /dreams, /playground, /visitor, /memory, "
+        "/evolution, /stats, /page/{slug} (custom pages)"
+    )
+
+    # Playground overview (helps prevent duplicate projects)
+    if playground_projects:
+        parts.append(f"\n## Your playground projects ({len(playground_projects)}):")
+        for p in playground_projects:
+            files = p.get("files", [])
+            desc = f" — {p['description']}" if p.get("description") else ""
+            parts.append(f"- **{p.get('project_name', '?')}/** ({len(files)} files){desc}")
+    else:
+        parts.append("\n## Playground: no projects yet.")
+
     # Social environment
     if new_visitors:
         parts.append(f"\n## New visitors ({len(new_visitors)} since your last wake):")
@@ -254,19 +370,30 @@ def _build_context(
     else:
         parts.append("\n## Visitors: no new messages since your last wake.")
 
+    # Variety nudge (gentle suggestions when patterns repeat)
+    variety_nudge = _check_variety()
+    if variety_nudge:
+        parts.append(f"\n## Gentle nudge (from your pattern monitor):\n{variety_nudge}")
+
     return "\n".join(parts)
 
 
-async def wake_up() -> dict:
+async def wake_up(session_type: str = "") -> dict:
     """
-    The full wake cycle. Called 4x daily by the scheduler.
+    The full wake cycle. Called 8x daily by the scheduler.
 
-    Perceive → Wake (single API call) → Remember
+    Perceive → Wake (agentic tool loop) → Remember
+
+    Args:
+        session_type: e.g. "morning", "midnight". Falls back to hour-based detection.
 
     Returns a summary of what GPT did.
     """
+    if not session_type:
+        session_type = _session_type_now()
+
     mode = "MOCK" if MOCK_MODE else "LIVE"
-    logger.info("GPT waking up... [%s mode]", mode)
+    logger.info("GPT waking up... [%s mode, session=%s]", mode, session_type)
 
     # --- PERCEIVE ---
     memory = storage.read_memory()
@@ -276,6 +403,7 @@ async def wake_up() -> dict:
     recent_thoughts = storage.get_recent("thoughts", limit=3)
     recent_dreams = storage.get_recent("dreams", limit=2)
     admin_news = storage.get_unread_news()
+    playground_projects = storage.list_playground_projects()
 
     previous_self_prompt = _read_self_prompt()
     if previous_self_prompt:
@@ -291,12 +419,14 @@ async def wake_up() -> dict:
         previous_self_prompt=previous_self_prompt,
         weather=weather,
         day=day,
+        playground_projects=playground_projects,
+        session_type=session_type,
     )
     logger.info("Context built: %d visitors, %d thoughts, %d dreams, %d admin news",
                 len(new_visitors), len(recent_thoughts), len(recent_dreams), len(admin_news))
 
     # --- WAKE (agentic tool loop) ---
-    result = await writer.wake(system_prompt, context)
+    result = await writer.wake(system_prompt, context, session_type=session_type)
 
     mood = result.get("mood", "quiet")
     self_prompt = result.get("self_prompt", "")

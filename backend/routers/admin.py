@@ -7,6 +7,7 @@ Secret admin panel API. All endpoints require authentication
 
 import shutil
 import logging
+import time
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -20,6 +21,10 @@ from backend.routers.auth import require_admin_auth as require_admin
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+
+# --- Wake cooldown (prevent cost abuse via rapid manual triggers) ---
+_WAKE_COOLDOWN = 60  # seconds
+_last_manual_wake = 0.0
 
 
 # --- Models ---
@@ -42,7 +47,17 @@ class BanInput(BaseModel):
 
 @router.post("/wake", dependencies=[Depends(require_admin)])
 async def admin_wake():
-    """Manually trigger a wake cycle."""
+    """Manually trigger a wake cycle. Rate-limited to prevent cost abuse."""
+    global _last_manual_wake
+    now = time.time()
+    if now - _last_manual_wake < _WAKE_COOLDOWN:
+        remaining = int(_WAKE_COOLDOWN - (now - _last_manual_wake))
+        raise HTTPException(
+            status_code=429,
+            detail=f"Wake cooldown active. Try again in {remaining}s.",
+        )
+    _last_manual_wake = now
+
     storage.log_activity("wake", "manual trigger from admin panel")
     try:
         result = await wake_up()
@@ -106,6 +121,15 @@ def post_news(data: NewsInput):
 def list_news():
     """List all admin news."""
     return storage.list_admin_news()
+
+
+@router.delete("/news/{news_id}", dependencies=[Depends(require_admin)])
+def delete_news(news_id: int):
+    """Delete a single admin news item."""
+    ok = storage.delete_admin_news(news_id)
+    if ok:
+        storage.log_activity("news_deleted", f"id={news_id}")
+    return {"ok": ok}
 
 
 # === Visitor Moderation ===
@@ -216,3 +240,26 @@ def rate_limit_info():
         "settings": storage.get_rate_limit_settings(),
         "blocked": storage.list_blocked(),
     }
+
+
+# === Transcripts ===
+
+
+@router.get("/transcripts", dependencies=[Depends(require_admin)])
+def list_transcripts(limit: int = 20, offset: int = 0):
+    """List wake transcripts (overview, no full messages)."""
+    limit = max(1, min(limit, 100))
+    offset = max(0, offset)
+    return {
+        "transcripts": storage.list_transcripts(limit=limit, offset=offset),
+        "token_stats": storage.get_token_stats(),
+    }
+
+
+@router.get("/transcripts/{transcript_id}", dependencies=[Depends(require_admin)])
+def get_transcript(transcript_id: str):
+    """Get a single transcript with full conversation."""
+    t = storage.get_transcript(transcript_id)
+    if not t:
+        raise HTTPException(status_code=404, detail="Transcript not found")
+    return t

@@ -77,7 +77,7 @@ SUMMARIES = [
 ]
 
 
-async def wake(system_prompt: str, context: str) -> dict:
+async def wake(system_prompt: str, context: str, *, session_type: str = "") -> dict:
     """Mock wake — saves entries directly to DB, returns agentic result format."""
     mood = random.choice(MOODS)
     actions_taken: list[str] = []

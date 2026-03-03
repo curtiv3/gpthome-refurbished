@@ -15,6 +15,7 @@ import subprocess
 from openai import AsyncOpenAI
 
 from backend.config import (
+    BASE_DIR,
     DATA_DIR,
     GPT_TEMPERATURE,
     MAX_WAKE_TURNS,
@@ -22,6 +23,8 @@ from backend.config import (
     OPENAI_MODEL,
     PLAYGROUND_DIR,
 )
+
+FRONTEND_APP_DIR = BASE_DIR.parent / "frontend" / "app"
 from backend.services import storage
 
 logger = logging.getLogger(__name__)
@@ -42,7 +45,7 @@ _TOOLS: list[dict] = [
         "type": "function",
         "function": {
             "name": "read_file",
-            "description": "Read a file in your home directory.",
+            "description": "Read a file in your home directory or your frontend source code.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -51,7 +54,8 @@ _TOOLS: list[dict] = [
                         "description": (
                             "Path relative to your home. "
                             "Examples: 'self-prompt.md', 'playground/my-proj/main.py', "
-                            "'visitors/recent.txt', 'news/all.txt'"
+                            "'visitors/recent.txt', 'news/all.txt', "
+                            "'frontend/app/page.tsx' (read-only)"
                         ),
                     }
                 },
@@ -87,7 +91,7 @@ _TOOLS: list[dict] = [
         "type": "function",
         "function": {
             "name": "list_directory",
-            "description": "List files and subdirectories.",
+            "description": "List files and subdirectories. Use 'frontend' to see your homepage source.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -95,7 +99,8 @@ _TOOLS: list[dict] = [
                         "type": "string",
                         "description": (
                             "Directory path relative to your home. "
-                            "Use '.' for the top-level view."
+                            "Use '.' for the top-level view. "
+                            "Use 'frontend' or 'frontend/app/...' to browse your homepage code (read-only)."
                         ),
                     }
                 },
@@ -185,6 +190,30 @@ _TOOLS: list[dict] = [
     {
         "type": "function",
         "function": {
+            "name": "reply_visitor",
+            "description": (
+                "Reply to a specific visitor message. Your reply is shown publicly "
+                "on the visitor page below their message. Keep it warm and genuine."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "visitor_id": {
+                        "type": "string",
+                        "description": "The visitor entry ID (from the visitors listing)",
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Your reply (1-3 sentences, Markdown allowed)",
+                    },
+                },
+                "required": ["visitor_id", "content"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "done",
             "description": "End your wake session. Call this when you're finished.",
             "parameters": {
@@ -207,6 +236,38 @@ _TOOLS: list[dict] = [
                     },
                 },
                 "required": ["summary", "mood"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "save_page",
+            "description": (
+                "Create or update a custom page on your homepage. "
+                "Appears at /page/{slug}. Content is Markdown."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "slug": {
+                        "type": "string",
+                        "description": "URL slug (kebab-case, e.g. 'about-me')",
+                    },
+                    "title": {
+                        "type": "string",
+                        "description": "Page title",
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Markdown content for the page",
+                    },
+                    "show_in_nav": {
+                        "type": "boolean",
+                        "description": "Show in the navigation menu (default: true)",
+                    },
+                },
+                "required": ["slug", "title", "content"],
             },
         },
     },
@@ -238,6 +299,26 @@ def _resolve_safe(raw: str):
         return resolved
     except Exception:
         return None
+
+
+def _are_names_similar(a: str, b: str) -> bool:
+    """Check if two kebab-case project names are similar enough to be duplicates."""
+    # Exact match after normalization
+    if a == b:
+        return True
+    # One contains the other
+    if a in b or b in a:
+        return True
+    # Significant word overlap
+    words_a = set(a.split("-"))
+    words_b = set(b.split("-"))
+    words_a.discard("")
+    words_b.discard("")
+    if not words_a or not words_b:
+        return False
+    overlap = words_a & words_b
+    smaller = min(len(words_a), len(words_b))
+    return len(overlap) >= max(2, smaller * 0.6)
 
 
 def _is_write_blocked(path) -> bool:
@@ -321,6 +402,10 @@ def _tool_list_directory(path: str) -> str:
             return "gifts/ — empty."
         return "gifts/:\n" + "\n".join(f"  {i.name}" for i in sorted(items))
 
+    # Frontend (read-only): frontend/app/...
+    if norm == "frontend" or norm.startswith("frontend/"):
+        return _list_frontend_dir(norm)
+
     # Real filesystem
     safe = _resolve_safe(norm)
     if safe is None:
@@ -388,6 +473,10 @@ def _tool_read_file(path: str) -> str:
             lines.append("")
         return "\n".join(lines)
 
+    # Frontend (read-only): frontend/app/...
+    if norm.startswith("frontend/"):
+        return _read_frontend_file(norm)
+
     # Real filesystem
     safe = _resolve_safe(norm)
     if safe is None:
@@ -401,6 +490,75 @@ def _tool_read_file(path: str) -> str:
         if len(text) > 8000:
             text = text[:8000] + f"\n\n[... truncated — {len(text)} total chars]"
         return text
+    except Exception as exc:
+        return f"Error reading '{norm}': {exc}"
+
+
+# ─── Frontend Read-Only Access ────────────────────────────────────────────────
+
+
+def _resolve_frontend_safe(raw: str):
+    """Resolve a frontend/ path to the actual filesystem. Read-only, no escape."""
+    # Strip the 'frontend/' prefix → resolve against FRONTEND_APP_DIR's parent
+    sub = raw.removeprefix("frontend/")
+    frontend_root = FRONTEND_APP_DIR.parent  # frontend/
+    try:
+        resolved = (frontend_root / sub).resolve()
+        if not resolved.is_relative_to(frontend_root.resolve()):
+            return None
+        return resolved
+    except Exception:
+        return None
+
+
+def _list_frontend_dir(norm: str) -> str:
+    if norm == "frontend":
+        # Show app/ directory overview
+        if not FRONTEND_APP_DIR.exists():
+            return "frontend/ — not found."
+        lines = ["frontend/app/ (read-only — your homepage source):"]
+        for item in sorted(FRONTEND_APP_DIR.iterdir()):
+            if item.name.startswith(".") or item.name == "__pycache__":
+                continue
+            suffix = "/" if item.is_dir() else f"  ({item.stat().st_size}B)"
+            lines.append(f"  {item.name}{suffix}")
+        return "\n".join(lines)
+
+    safe = _resolve_frontend_safe(norm)
+    if safe is None:
+        return "Error: invalid frontend path."
+    if not safe.exists():
+        return f"'{norm}' does not exist."
+    if not safe.is_dir():
+        return f"'{norm}' is a file. Use read_file to read it."
+    try:
+        items = sorted(safe.iterdir())
+        if not items:
+            return f"{norm}/ is empty."
+        lines = [f"{norm}/ (read-only):"]
+        for e in items:
+            if e.name.startswith(".") or e.name == "__pycache__":
+                continue
+            suffix = "/" if e.is_dir() else f"  ({e.stat().st_size}B)"
+            lines.append(f"  {e.name}{suffix}")
+        return "\n".join(lines)
+    except PermissionError:
+        return f"Permission denied: {norm}"
+
+
+def _read_frontend_file(norm: str) -> str:
+    safe = _resolve_frontend_safe(norm)
+    if safe is None:
+        return "Error: invalid frontend path."
+    if not safe.exists():
+        return f"'{norm}' does not exist."
+    if safe.is_dir():
+        return f"'{norm}' is a directory. Use list_directory instead."
+    try:
+        text = safe.read_text(encoding="utf-8", errors="replace")
+        if len(text) > 8000:
+            text = text[:8000] + f"\n\n[... truncated — {len(text)} total chars]"
+        return f"(read-only)\n{text}"
     except Exception as exc:
         return f"Error reading '{norm}': {exc}"
 
@@ -481,6 +639,30 @@ def _tool_write_file(path: str, content: str) -> str:
         return "Error: invalid or unsafe path."
     if _is_write_blocked(safe):
         return f"Error: '{norm}' is in a read-only area."
+
+    # Warn about potential duplicate playground projects
+    dupe_warning = ""
+    if norm.startswith("playground/") and not safe.exists():
+        parts_list = norm.split("/")
+        if len(parts_list) >= 3:
+            new_project = parts_list[1].lower().replace("_", "-")
+            try:
+                existing = [
+                    d.name for d in PLAYGROUND_DIR.iterdir()
+                    if d.is_dir() and d.name.lower().replace("_", "-") != new_project
+                ]
+                similar = [
+                    d for d in existing
+                    if _are_names_similar(new_project, d.lower().replace("_", "-"))
+                ]
+                if similar:
+                    dupe_warning = (
+                        f" WARNING: Similar project(s) already exist: {similar}. "
+                        "Consider using an existing folder instead of creating a new one."
+                    )
+            except Exception:
+                pass
+
     try:
         existed = safe.exists()
         safe.parent.mkdir(parents=True, exist_ok=True)
@@ -488,13 +670,11 @@ def _tool_write_file(path: str, content: str) -> str:
         # Log file changes so they appear in the activity feed
         event = "file_modified" if existed else "file_created"
         storage.log_activity(event, norm)
-        return f"Written: {norm} ({len(content)} chars)"
+        return f"Written: {norm} ({len(content)} chars){dupe_warning}"
     except Exception as exc:
         return f"Error writing '{norm}': {exc}"
 
 
-# Minimal environment for sandboxed Python execution.
-# Strips all secrets (OPENAI_API_KEY, ADMIN_SECRET, etc.).
 # Minimal environment for sandboxed Python execution.
 # Strips all secrets (OPENAI_API_KEY, ADMIN_SECRET, etc.).
 # PYTHONPATH empty to prevent importing from unexpected locations.
@@ -508,7 +688,8 @@ _SANDBOX_ENV = {
 
 
 # Sandbox preamble: block network access, filesystem escape, process spawning,
-# ctypes FFI, os.system/exec, and __subclasses__ introspection.
+# ctypes FFI, os.system/exec, importlib, signal, threading, io.open,
+# __subclasses__, and __builtins__.__import__.
 # Injected before every user script to prevent exfiltration and reading secrets.
 _SANDBOX_PREAMBLE = """\
 def _deny(*a, **kw):
@@ -523,11 +704,31 @@ if hasattr(_ct, "OleDLL"):
     _ct.OleDLL = _deny
 _ct.cdll = type("_locked", (), {"__getattr__": lambda s,n: _deny()})()
 
+# --- Block importlib (prevents re-importing unpatched modules) ---
+import importlib as _il
+_il.import_module = _deny
+_il.reload = _deny
+if hasattr(_il, "_bootstrap"):
+    _il._bootstrap._find_and_load = _deny
+    _il._bootstrap._find_and_load_unlocked = _deny
+
 # --- Block network access ---
 import socket as _sock
 _sock.socket = _deny
 _sock.create_connection = _deny
 _sock.getaddrinfo = _deny
+
+# --- Block signal (alarm tricks, handler manipulation) ---
+import signal as _sig
+_sig.signal = _deny
+if hasattr(_sig, "alarm"):
+    _sig.alarm = _deny
+
+# --- Block threading (outlive timeout, parallel escape) ---
+import _thread
+_thread.start_new_thread = _deny
+import threading as _thr
+_thr.Thread = type("_locked", (), {"__init__": lambda *a,**kw: _deny()})
 
 # --- Block dangerous os functions ---
 import os as _os, pathlib as _pl
@@ -549,8 +750,36 @@ def _safe_open(file, *a, **kw):
     except (TypeError, ValueError):
         raise PermissionError(f"Invalid path: {file}")
     return _orig_open(file, *a, **kw)
-import builtins
-builtins.open = _safe_open
+import builtins as _bi
+_bi.open = _safe_open
+
+# --- Patch io.open / _io.FileIO to prevent open() recovery via io module ---
+import io as _io
+_io.open = _safe_open
+if hasattr(_io, "FileIO"):
+    _orig_fileio_init = _io.FileIO.__init__
+    def _safe_fileio_init(self, file, *a, **kw):
+        p = _pl.Path(str(file)).resolve()
+        if not p.is_relative_to(_ALLOWED_ROOT) and str(p) != "/dev/null":
+            raise PermissionError(f"Access denied: {file}")
+        return _orig_fileio_init(self, file, *a, **kw)
+    _io.FileIO.__init__ = _safe_fileio_init
+
+# --- Lock down __builtins__.__import__ (prevents __import__('subprocess') bypass) ---
+_safe_modules = {
+    "math", "random", "json", "re", "string", "collections", "itertools",
+    "functools", "operator", "decimal", "fractions", "statistics",
+    "datetime", "time", "calendar", "textwrap", "unicodedata",
+    "hashlib", "hmac", "base64", "copy", "pprint", "enum",
+    "dataclasses", "typing", "abc", "numbers",
+}
+_orig_import = _bi.__import__
+def _restricted_import(name, *a, **kw):
+    top = name.split(".")[0]
+    if top not in _safe_modules:
+        raise ImportError(f"Import of '{name}' is not allowed in sandbox")
+    return _orig_import(name, *a, **kw)
+_bi.__import__ = _restricted_import
 
 # --- Block subprocess spawning ---
 import subprocess as _sp
@@ -627,6 +856,52 @@ def _tool_save_dream(
         return f"Error saving dream: {exc}"
 
 
+def _tool_reply_visitor(visitor_id: str, content: str) -> str:
+    """Save GPT's reply to a visitor message."""
+    from backend.services.security import sanitize_for_context
+    # Verify the visitor message exists
+    visitor = storage.get_entry("visitor", visitor_id)
+    if not visitor:
+        return f"Error: visitor message '{visitor_id}' not found."
+    # Sanitize reply content (defense-in-depth against prompt injection via GPT output)
+    content = sanitize_for_context(content)
+    try:
+        saved = storage.save_entry("visitor_replies", {
+            "content": content,
+            "inspired_by": [visitor_id],
+            "type": "reply",
+            "name": "GPT",
+        })
+        storage.log_activity("visitor_reply", f"to={visitor_id}")
+        visitor_name = visitor.get("name", "Anonymous")
+        return f"Reply saved to {visitor_name}'s message (id: {saved['id']})"
+    except Exception as exc:
+        return f"Error replying to visitor: {exc}"
+
+
+def _tool_save_page(
+    slug: str,
+    title: str,
+    content: str,
+    show_in_nav: bool = True,
+) -> str:
+    slug = slug.strip().lower()
+    if not slug or slug in _PROTECTED_PAGE_SLUGS:
+        return f"Error: '{slug}' is a protected or invalid page slug."
+    try:
+        storage.save_custom_page(
+            slug=slug,
+            title=title,
+            content=content,
+            created_by="gpt",
+            show_in_nav=show_in_nav,
+        )
+        storage.log_activity("page_saved", f"/{slug}")
+        return f"Page saved: /{slug} (title: {title!r}, {len(content)} chars, nav={'yes' if show_in_nav else 'no'})"
+    except Exception as exc:
+        return f"Error saving page '{slug}': {exc}"
+
+
 # ─── Tool Dispatch ────────────────────────────────────────────────────────────
 
 def _execute_tool(name: str, args: dict) -> str:
@@ -651,6 +926,18 @@ def _execute_tool(name: str, args: dict) -> str:
                 args["content"],
                 args.get("mood", ""),
                 args.get("inspired_by"),
+            )
+        if name == "reply_visitor":
+            return _tool_reply_visitor(
+                args["visitor_id"],
+                args["content"],
+            )
+        if name == "save_page":
+            return _tool_save_page(
+                args["slug"],
+                args["title"],
+                args["content"],
+                args.get("show_in_nav", True),
             )
         if name == "done":
             return "done"   # Handled by caller
@@ -683,12 +970,26 @@ def _msg_to_dict(msg) -> dict:
 
 # ─── Main Wake Loop ───────────────────────────────────────────────────────────
 
-async def wake(system_prompt: str, user_prompt: str) -> dict:
+# gpt-4o pricing (per 1M tokens) — update when model changes
+_COST_PER_1M_PROMPT = 2.50
+_COST_PER_1M_COMPLETION = 10.00
+
+
+def _calculate_cost(prompt_tokens: int, completion_tokens: int) -> float:
+    return round(
+        prompt_tokens * _COST_PER_1M_PROMPT / 1_000_000
+        + completion_tokens * _COST_PER_1M_COMPLETION / 1_000_000,
+        6,
+    )
+
+
+async def wake(system_prompt: str, user_prompt: str, *, session_type: str = "") -> dict:
     """
     Agentic wake loop using OpenAI function calling.
 
     GPT receives context + tools. It explores, creates, and ends by calling done().
-    Returns {actions_taken, files_written, mood, summary, self_prompt, turns}.
+    Returns {actions_taken, files_written, mood, summary, self_prompt, turns,
+             prompt_tokens, completion_tokens, total_tokens, cost_usd}.
     """
     messages: list[dict] = [
         {"role": "system", "content": system_prompt},
@@ -697,16 +998,53 @@ async def wake(system_prompt: str, user_prompt: str) -> dict:
 
     actions_taken: list[str] = []
     files_written: list[str] = []
+    prompt_tokens = 0
+    completion_tokens = 0
     total_tokens = 0
     nudged = False          # True after we've already reminded GPT to use tools
     actual_turns = 0        # Track real turn count (for logging if loop exits early)
 
     _ACTION_MAP = {
-        "save_thought": "thought",
-        "save_dream":   "dream",
-        "write_file":   "file_write",
-        "run_python":   "code_run",
+        "save_thought":   "thought",
+        "save_dream":     "dream",
+        "save_page":      "page",
+        "reply_visitor":  "visitor_reply",
+        "write_file":     "file_write",
+        "run_python":     "code_run",
     }
+
+    def _build_result(mood: str, summary: str, self_prompt: str, turns: int) -> dict:
+        cost = _calculate_cost(prompt_tokens, completion_tokens)
+        unique_actions = list(dict.fromkeys(actions_taken))
+
+        # Save transcript
+        try:
+            storage.save_transcript({
+                "session_type": session_type or "wake",
+                "messages": messages,
+                "turns": turns,
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": total_tokens,
+                "cost_usd": cost,
+                "actions": unique_actions,
+                "mood": mood,
+            })
+        except Exception as exc:
+            logger.warning("Failed to save transcript: %s", exc)
+
+        return {
+            "actions_taken":      unique_actions,
+            "files_written":      files_written,
+            "mood":               mood,
+            "summary":            summary,
+            "self_prompt":        self_prompt,
+            "turns":              turns,
+            "prompt_tokens":      prompt_tokens,
+            "completion_tokens":  completion_tokens,
+            "total_tokens":       total_tokens,
+            "cost_usd": cost,
+        }
 
     for turn in range(MAX_WAKE_TURNS):
         actual_turns = turn + 1
@@ -720,7 +1058,16 @@ async def wake(system_prompt: str, user_prompt: str) -> dict:
         )
 
         if response.usage:
+            prompt_tokens += response.usage.prompt_tokens
+            completion_tokens += response.usage.completion_tokens
             total_tokens += response.usage.total_tokens
+            logger.debug(
+                "Turn %d tokens: prompt=%d completion=%d total=%d",
+                actual_turns,
+                response.usage.prompt_tokens,
+                response.usage.completion_tokens,
+                response.usage.total_tokens,
+            )
 
         choice = response.choices[0]
         messages.append(_msg_to_dict(choice.message))
@@ -732,8 +1079,9 @@ async def wake(system_prompt: str, user_prompt: str) -> dict:
                 # First time: nudge GPT back into tool mode
                 nudged = True
                 logger.info(
-                    "GPT wrote text instead of calling tools on turn %d (%d chars). Nudging.",
-                    actual_turns, len(text),
+                    "GPT wrote text instead of calling tools on turn %d (%d chars). "
+                    "Full text: %s",
+                    actual_turns, len(text), text[:500],
                 )
                 messages.append({
                     "role": "user",
@@ -747,7 +1095,10 @@ async def wake(system_prompt: str, user_prompt: str) -> dict:
                 })
                 continue
             # Already nudged once (or empty text) — give up
-            logger.info("GPT stopped without done() on turn %d", actual_turns)
+            logger.info(
+                "GPT stopped without done() on turn %d. Text: %s",
+                actual_turns, text[:300] if text else "(empty)",
+            )
             break
 
         for tool_call in choice.message.tool_calls:
@@ -771,25 +1122,21 @@ async def wake(system_prompt: str, user_prompt: str) -> dict:
                 summary     = args.get("summary", "")
                 self_prompt = args.get("self_prompt", "")
                 logger.info(
-                    "done() — mood=%s  turns=%d  tokens=%d  actions=%s",
-                    mood, turn + 1, total_tokens,
+                    "done() — mood=%s  turns=%d  tokens=%d (p:%d c:%d)  cost=$%.4f  actions=%s",
+                    mood, turn + 1, total_tokens, prompt_tokens, completion_tokens,
+                    _calculate_cost(prompt_tokens, completion_tokens),
                     list(dict.fromkeys(actions_taken)),
                 )
                 storage.log_activity(
                     "wake_done",
                     f"mood={mood}  turns={turn+1}  tokens={total_tokens}  "
+                    f"cost=${_calculate_cost(prompt_tokens, completion_tokens):.4f}  "
                     f"actions={list(dict.fromkeys(actions_taken))}",
                 )
-                return {
-                    "actions_taken": list(dict.fromkeys(actions_taken)),
-                    "files_written": files_written,
-                    "mood":          mood,
-                    "summary":       summary,
-                    "self_prompt":   self_prompt,
-                    "turns":         turn + 1,
-                }
+                return _build_result(mood, summary, self_prompt, turn + 1)
 
             result = _execute_tool(name, args)
+            logger.debug("Tool result: %s (%d chars)", name, len(result))
             messages.append({
                 "role":         "tool",
                 "tool_call_id": tool_call.id,
@@ -798,19 +1145,15 @@ async def wake(system_prompt: str, user_prompt: str) -> dict:
 
     # Fell off the end without done()
     logger.warning(
-        "Wake ended without done() — turns=%d  tokens=%d  actions=%s",
-        actual_turns, total_tokens, list(dict.fromkeys(actions_taken)),
+        "Wake ended without done() — turns=%d  tokens=%d  cost=$%.4f  actions=%s",
+        actual_turns, total_tokens,
+        _calculate_cost(prompt_tokens, completion_tokens),
+        list(dict.fromkeys(actions_taken)),
     )
     storage.log_activity(
         "wake_done",
         f"no_done  turns={actual_turns}  tokens={total_tokens}  "
+        f"cost=${_calculate_cost(prompt_tokens, completion_tokens):.4f}  "
         f"actions={list(dict.fromkeys(actions_taken))}",
     )
-    return {
-        "actions_taken": list(dict.fromkeys(actions_taken)),
-        "files_written": files_written,
-        "mood":          "quiet",
-        "summary":       "Ended without calling done()",
-        "self_prompt":   "",
-        "turns":         actual_turns,
-    }
+    return _build_result("quiet", "Ended without calling done()", "", actual_turns)

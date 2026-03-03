@@ -108,6 +108,16 @@ def status():
 
 @app.post("/api/wake", dependencies=[Depends(require_admin_auth)])
 async def manual_wake():
-    """Manually trigger a wake cycle. Requires admin authentication."""
+    """Manually trigger a wake cycle. Requires admin authentication.
+    Shares cooldown with admin/wake to prevent cost abuse."""
+    from backend.routers.admin import _last_manual_wake, _WAKE_COOLDOWN
+    import time as _time
+    now = _time.time()
+    if now - _last_manual_wake < _WAKE_COOLDOWN:
+        from fastapi import HTTPException as _Exc
+        remaining = int(_WAKE_COOLDOWN - (now - _last_manual_wake))
+        raise _Exc(status_code=429, detail=f"Wake cooldown active. Try again in {remaining}s.")
+    import backend.routers.admin as _adm
+    _adm._last_manual_wake = now
     result = await wake_up()
     return result

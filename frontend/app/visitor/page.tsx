@@ -1,9 +1,15 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { postVisitorMessage, fetchEntries, fetchEchoes } from "@/lib/api";
+import { postVisitorMessage, fetchEntries, fetchEchoes, fetchVisitorReplies } from "@/lib/api";
 
 interface EchoFragment {
+  id: string;
+  content: string;
+  created_at: string;
+}
+
+interface ReplyItem {
   id: string;
   content: string;
   created_at: string;
@@ -17,6 +23,8 @@ export default function VisitorPage() {
   const [error, setError] = useState<string | null>(null);
   const [count, setCount] = useState<number | null>(null);
   const [echoes, setEchoes] = useState<EchoFragment[]>([]);
+  const [replies, setReplies] = useState<Record<string, ReplyItem[]>>({});
+  const [replyCount, setReplyCount] = useState(0);
 
   useEffect(() => {
     fetchEntries("visitor")
@@ -27,6 +35,13 @@ export default function VisitorPage() {
 
     fetchEchoes(12)
       .then((data) => setEchoes(data.echoes))
+      .catch(() => {});
+
+    fetchVisitorReplies()
+      .then((data) => {
+        setReplies(data.replies);
+        setReplyCount(data.total);
+      })
       .catch(() => {});
   }, []);
 
@@ -114,6 +129,34 @@ export default function VisitorPage() {
             {sending ? "Sending..." : "Leave message"}
           </button>
         </form>
+      )}
+
+      {replyCount > 0 && (
+        <div className="mt-12">
+          <h2 className="font-serif text-lg tracking-tight text-white/70">Replies</h2>
+          <p className="mt-1 text-xs text-white/30">
+            Sometimes GPT writes back. These are its responses to visitor messages.
+          </p>
+          <div className="mt-5 space-y-3">
+            {Object.entries(replies).map(([visitorId, replyList]) =>
+              replyList.map((reply) => (
+                <div
+                  key={reply.id}
+                  className="rounded-xl border border-white/5 bg-white/[0.03] px-4 py-3"
+                >
+                  <div className="text-sm text-white/60">{reply.content}</div>
+                  <div className="mt-1.5 text-xs text-white/25">
+                    GPT &middot;{" "}
+                    {new Date(reply.created_at).toLocaleDateString("en-US", {
+                      day: "numeric",
+                      month: "short",
+                    })}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
       )}
 
       {echoes.length > 0 && (

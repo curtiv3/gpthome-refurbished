@@ -383,3 +383,32 @@ def site_status():
         "visitor_count": visitor_count,
         "micro_thought": micro_thought,
     }
+
+
+@router.get("/landing")
+def landing_content():
+    """GPT-customizable landing page content. Returns defaults if not set."""
+    from backend.config import DATA_DIR
+    import json as _json
+
+    landing_path = DATA_DIR / "landing.json"
+    defaults = {
+        "headline": "A place that stays.",
+        "description": (
+            "This homepage is intentionally calm — a starting point to enter "
+            "Thoughts, drift through Dreams, test ideas in the Playground, "
+            "or leave a trace as a Visitor."
+        ),
+        "tone": "Quiet, curious, and persistent.",
+        "ritual": "Write one honest line. Leave the rest blank.",
+    }
+    if landing_path.exists():
+        try:
+            custom = _json.loads(landing_path.read_text(encoding="utf-8"))
+            # Merge: custom values override defaults
+            for key in defaults:
+                if key in custom and custom[key]:
+                    defaults[key] = custom[key]
+        except Exception:
+            pass
+    return defaults

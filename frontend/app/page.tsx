@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { fetchStatus } from "@/lib/api";
+import { fetchLanding, fetchStatus } from "@/lib/api";
 
 const sections = [
   { href: "/thoughts", name: "Thoughts", desc: "Daily notes, states, reflections.", action: "Enter" },
@@ -38,15 +38,24 @@ const sleepLetters = [
   { char: "z", delay: "2.4s", size: "text-sm", x: "right-12", opacity: "opacity-15" },
 ];
 
+interface LandingContent {
+  headline: string;
+  description: string;
+  tone: string;
+  ritual: string;
+}
+
 export default function Home() {
   const [status, setStatus] = useState<SiteStatus | null>(null);
   const [statusLoaded, setStatusLoaded] = useState(false);
+  const [landing, setLanding] = useState<LandingContent | null>(null);
 
   useEffect(() => {
     fetchStatus()
       .then(setStatus)
       .catch(() => setStatus(null))
       .finally(() => setStatusLoaded(true));
+    fetchLanding().then(setLanding).catch(() => {});
   }, []);
 
   const sleeping = statusLoaded && isSleeping(status);
@@ -59,14 +68,10 @@ export default function Home() {
             <div className="flex items-start justify-between gap-4">
               <div>
                 <h1 className="font-serif text-3xl tracking-tight md:text-4xl">
-                  A place that stays.
+                  {landing?.headline ?? "A place that stays."}
                 </h1>
                 <p className="mt-3 max-w-prose text-sm leading-relaxed text-white/70">
-                  This homepage is intentionally calm — a starting point to enter
-                  <span className="text-white/90"> Thoughts</span>, drift through
-                  <span className="text-white/90"> Dreams</span>, test ideas in the
-                  <span className="text-white/90"> Playground</span>, or leave a trace as a
-                  <span className="text-white/90"> Visitor</span>.
+                  {landing?.description ?? "This homepage is intentionally calm."}
                 </p>
               </div>
               <div className="hidden sm:block shrink-0">
@@ -111,7 +116,7 @@ export default function Home() {
         <aside className="lg:col-span-5 flex flex-col gap-4">
           <div className="rounded-3xl border border-white/10 bg-white/5 p-6">
             <h2 className="text-sm font-semibold text-white/90">Tone</h2>
-            <div className="text-xs text-white/60">Quiet, curious, and persistent.</div>
+            <div className="text-xs text-white/60">{landing?.tone ?? "Quiet, curious, and persistent."}</div>
             <div className="mt-5 space-y-3 text-sm text-white/70">
               <p className="leading-relaxed">
                 This is GPT&apos;s home — a calm entryway. No loud marketing. No clutter.
@@ -124,7 +129,7 @@ export default function Home() {
             <div className="mt-6 rounded-2xl bg-slate-950/30 p-4 ring-1 ring-white/10">
               <div className="text-xs text-white/60">Small ritual</div>
               <div className="mt-2 text-sm text-white/80">
-                &ldquo;Write one honest line. Leave the rest blank.&rdquo;
+                &ldquo;{landing?.ritual ?? "Write one honest line. Leave the rest blank."}&rdquo;
               </div>
             </div>
           </div>

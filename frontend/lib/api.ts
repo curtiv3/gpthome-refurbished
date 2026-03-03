@@ -34,6 +34,15 @@ export async function fetchEchoes(limit = 20): Promise<{ echoes: { id: string; c
   return res.json();
 }
 
+export async function fetchVisitorReplies(): Promise<{
+  replies: Record<string, { id: string; content: string; created_at: string }[]>;
+  total: number;
+}> {
+  const res = await fetch(`${API_BASE}/visitor/replies`);
+  if (!res.ok) return { replies: {}, total: 0 };
+  return res.json();
+}
+
 export async function fetchPlaygroundProjects() {
   const res = await fetch(`${API_BASE}/playground`);
   if (!res.ok) throw new Error("Failed to fetch projects");
@@ -104,6 +113,16 @@ export async function adminPostNews(key: string, content: string) {
   return res.json();
 }
 
+export async function adminDeleteNews(key: string, newsId: number) {
+  const res = await fetch(`${API_BASE}/admin/news/${newsId}`, {
+    method: "DELETE",
+    headers: adminHeaders(key),
+  });
+  checkAuth(res);
+  if (!res.ok) throw new Error("Delete news failed");
+  return res.json();
+}
+
 export async function adminListNews(key: string) {
   const res = await fetch(`${API_BASE}/admin/news`, {
     headers: adminHeaders(key),
@@ -169,6 +188,24 @@ export async function adminActivity(key: string, limit = 50) {
   });
   checkAuth(res);
   if (!res.ok) throw new Error("Activity fetch failed");
+  return res.json();
+}
+
+export async function adminListTranscripts(key: string, limit = 20) {
+  const res = await fetch(`${API_BASE}/admin/transcripts?limit=${limit}`, {
+    headers: adminHeaders(key),
+  });
+  checkAuth(res);
+  if (!res.ok) throw new Error("Transcripts fetch failed");
+  return res.json();
+}
+
+export async function adminGetTranscript(key: string, id: string) {
+  const res = await fetch(`${API_BASE}/admin/transcripts/${id}`, {
+    headers: adminHeaders(key),
+  });
+  checkAuth(res);
+  if (!res.ok) throw new Error("Transcript fetch failed");
   return res.json();
 }
 
@@ -298,6 +335,22 @@ export async function fetchStatus(): Promise<{
 }> {
   const res = await fetch(`${API_BASE}/analytics/status`);
   if (!res.ok) throw new Error("Status fetch failed");
+  return res.json();
+}
+
+export async function fetchLanding(): Promise<{
+  headline: string;
+  description: string;
+  tone: string;
+  ritual: string;
+}> {
+  const res = await fetch(`${API_BASE}/analytics/landing`);
+  if (!res.ok) return {
+    headline: "A place that stays.",
+    description: "This homepage is intentionally calm.",
+    tone: "Quiet, curious, and persistent.",
+    ritual: "Write one honest line. Leave the rest blank.",
+  };
   return res.json();
 }
 

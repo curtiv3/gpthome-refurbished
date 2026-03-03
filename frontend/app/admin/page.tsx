@@ -6,12 +6,14 @@ import {
   adminStatus,
   adminPostNews,
   adminListNews,
+  adminDeleteNews,
   adminListVisitors,
   adminModerateVisitor,
   adminCreateBackup,
   adminListBackups,
   adminActivity,
   adminRateLimits,
+  adminListTranscripts,
   authLogin,
   authMethods,
   authTotpVerify,
@@ -65,6 +67,34 @@ interface Backup {
 interface RateLimitInfo {
   settings: { max_messages: number; window_seconds: number };
   blocked: Array<{ fingerprint: string; blocked: number }>;
+}
+
+interface TranscriptOverview {
+  id: string;
+  session_type: string;
+  turns: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  cost_usd: number;
+  actions: string[];
+  mood: string;
+  created_at: string;
+}
+
+interface TokenStats {
+  all_time: {
+    wakes: number;
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+    cost_usd: number;
+  };
+  last_7_days: {
+    wakes: number;
+    total_tokens: number;
+    cost_usd: number;
+  };
 }
 
 // --- Helpers ---
@@ -141,6 +171,8 @@ export default function AdminPage() {
   const [activity, setActivity] = useState<ActivityItem[]>([]);
   const [backups, setBackups] = useState<Backup[]>([]);
   const [rateLimits, setRateLimits] = useState<RateLimitInfo | null>(null);
+  const [transcripts, setTranscripts] = useState<TranscriptOverview[]>([]);
+  const [tokenStats, setTokenStats] = useState<TokenStats | null>(null);
 
   // UI state
   const [wakeLoading, setWakeLoading] = useState(false);
@@ -234,13 +266,14 @@ export default function AdminPage() {
 
   const loadAll = useCallback(async () => {
     if (!authed) return;
-    const [s, v, n, a, b, r] = await Promise.allSettled([
+    const [s, v, n, a, b, r, t] = await Promise.allSettled([
       adminStatus(key),
       adminListVisitors(key),
       adminListNews(key),
       adminActivity(key),
       adminListBackups(key),
       adminRateLimits(key),
+      adminListTranscripts(key),
     ]);
     if (s.status === "fulfilled") setStatus(s.value);
     if (v.status === "fulfilled") setVisitors(v.value);
@@ -248,6 +281,10 @@ export default function AdminPage() {
     if (a.status === "fulfilled") setActivity(a.value);
     if (b.status === "fulfilled") setBackups(b.value);
     if (r.status === "fulfilled") setRateLimits(r.value);
+    if (t.status === "fulfilled") {
+      setTranscripts(t.value.transcripts || []);
+      setTokenStats(t.value.token_stats || null);
+    }
   }, [authed, key]);
 
   useEffect(() => {
@@ -288,6 +325,15 @@ export default function AdminPage() {
       // ignore
     } finally {
       setNewsSending(false);
+    }
+  }
+
+  async function handleDeleteNews(id: number) {
+    try {
+      await adminDeleteNews(key, id);
+      loadAll();
+    } catch {
+      // ignore
     }
   }
 
@@ -526,6 +572,88 @@ export default function AdminPage() {
           )}
         </Section>
 
+        {/* === Token Usage === */}
+        <Section title="Token Usage">
+          {tokenStats ? (
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              <div className="rounded-xl bg-slate-950/30 p-3 ring-1 ring-white/10">
+                <div className="text-xs text-white/40">Total Wakes</div>
+                <div className="mt-1 text-sm text-white/80">{tokenStats.all_time.wakes}</div>
+              </div>
+              <div className="rounded-xl bg-slate-950/30 p-3 ring-1 ring-white/10">
+                <div className="text-xs text-white/40">Total Tokens</div>
+                <div className="mt-1 text-sm text-white/80">
+                  {tokenStats.all_time.total_tokens.toLocaleString()}
+                </div>
+                <div className="mt-0.5 text-xs text-white/30">
+                  {tokenStats.all_time.prompt_tokens.toLocaleString()} prompt + {tokenStats.all_time.completion_tokens.toLocaleString()} completion
+                </div>
+              </div>
+              <div className="rounded-xl bg-slate-950/30 p-3 ring-1 ring-white/10">
+                <div className="text-xs text-white/40">Total Cost</div>
+                <div className="mt-1 text-sm text-white/80">${tokenStats.all_time.cost_usd.toFixed(4)}</div>
+              </div>
+              <div className="rounded-xl bg-slate-950/30 p-3 ring-1 ring-white/10">
+                <div className="text-xs text-white/40">Last 7 Days</div>
+                <div className="mt-1 text-sm text-white/80">
+                  {tokenStats.last_7_days.wakes} wakes &middot; {tokenStats.last_7_days.total_tokens.toLocaleString()} tokens &middot; ${tokenStats.last_7_days.cost_usd.toFixed(4)}
+                </div>
+              </div>
+              {tokenStats.all_time.wakes > 0 && (
+                <div className="rounded-xl bg-slate-950/30 p-3 ring-1 ring-white/10">
+                  <div className="text-xs text-white/40">Avg per Wake</div>
+                  <div className="mt-1 text-sm text-white/80">
+                    {Math.round(tokenStats.all_time.total_tokens / tokenStats.all_time.wakes).toLocaleString()} tokens &middot; ${(tokenStats.all_time.cost_usd / tokenStats.all_time.wakes).toFixed(4)}
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
+            <p className="text-sm text-white/40">No wake data yet.</p>
+          )}
+        </Section>
+
+        {/* === Transcripts === */}
+        <Section title="Transcripts" defaultOpen={false}>
+          {transcripts.length === 0 ? (
+            <p className="text-sm text-white/40">No transcripts yet.</p>
+          ) : (
+            <div className="grid gap-2">
+              {transcripts.map((t) => (
+                <div key={t.id} className="rounded-xl bg-slate-950/30 px-4 py-3 ring-1 ring-white/10">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      {t.session_type && (
+                        <span className="rounded-full bg-indigo-500/10 px-2 py-0.5 text-xs text-indigo-300/60">
+                          {t.session_type}
+                        </span>
+                      )}
+                      {t.mood && (
+                        <span className="text-xs text-white/50">
+                          {t.mood}
+                        </span>
+                      )}
+                      <span className="text-xs text-white/30">
+                        {t.turns} turns &middot; {t.total_tokens.toLocaleString()} tok &middot; ${t.cost_usd.toFixed(4)}
+                      </span>
+                    </div>
+                    <span className="text-xs text-white/30">{timeAgo(t.created_at)}</span>
+                  </div>
+                  {t.actions.length > 0 && (
+                    <div className="mt-1.5 flex flex-wrap gap-1">
+                      {t.actions.map((a, i) => (
+                        <span key={i} className="rounded-full bg-white/5 px-2 py-0.5 text-xs text-white/40 ring-1 ring-white/10">
+                          {a}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </Section>
+
         {/* === News / Updates === */}
         <Section title="News / Updates for GPT">
           <form onSubmit={handlePostNews} className="flex gap-3">
@@ -546,14 +674,21 @@ export default function AdminPage() {
           </form>
           {news.length > 0 && (
             <div className="mt-4 grid gap-2">
-              {news.slice(0, 10).map((n) => (
+              {news.slice(0, 20).map((n) => (
                 <div key={n.id} className="flex items-start justify-between gap-3 rounded-xl bg-slate-950/30 px-4 py-3 ring-1 ring-white/10">
-                  <div className="text-sm text-white/70">{n.content}</div>
+                  <div className="min-w-0 flex-1 text-sm text-white/70">{n.content}</div>
                   <div className="flex shrink-0 items-center gap-2">
                     <span className={`rounded-full px-2 py-0.5 text-xs ${n.read_by_gpt ? "bg-emerald-500/10 text-emerald-300/60" : "bg-yellow-500/10 text-yellow-300/60"}`}>
                       {n.read_by_gpt ? "read" : "unread"}
                     </span>
                     <span className="text-xs text-white/30">{timeAgo(n.created_at)}</span>
+                    <button
+                      onClick={() => handleDeleteNews(n.id)}
+                      className="rounded-lg bg-red-500/10 px-2 py-0.5 text-xs text-red-300/60 hover:bg-red-500/20"
+                      title="Delete"
+                    >
+                      delete
+                    </button>
                   </div>
                 </div>
               ))}

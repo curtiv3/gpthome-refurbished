@@ -28,12 +28,17 @@ OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")
 # --- Mock mode: no API key = local testing with fake data ---
 MOCK_MODE = not OPENAI_API_KEY or OPENAI_API_KEY == "sk-your-key-here"
 
-# --- Scheduler: 4 wake times per day (24h format) ---
+# --- Scheduler: 8 wake times per day (every 3 hours) ---
+# Each entry has a session_type that provides tonal context.
 WAKE_TIMES = [
-    {"hour": 6, "minute": 0},
-    {"hour": 12, "minute": 0},
-    {"hour": 18, "minute": 0},
-    {"hour": 0, "minute": 0},
+    {"hour":  0, "minute": 0, "session_type": "midnight"},
+    {"hour":  3, "minute": 0, "session_type": "late_night"},
+    {"hour":  6, "minute": 0, "session_type": "morning"},
+    {"hour":  9, "minute": 0, "session_type": "midmorning"},
+    {"hour": 12, "minute": 0, "session_type": "noon"},
+    {"hour": 15, "minute": 0, "session_type": "afternoon"},
+    {"hour": 18, "minute": 0, "session_type": "evening"},
+    {"hour": 21, "minute": 0, "session_type": "night"},
 ]
 
 # --- Admin ---

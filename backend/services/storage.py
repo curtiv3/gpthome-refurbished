@@ -5,6 +5,7 @@ One database file (gpthome.db), proper queries, still simple.
 Playground files stay on disk (they're actual code files GPT writes).
 """
 
+import hashlib
 import json
 import secrets
 import sqlite3
@@ -13,7 +14,30 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from backend.config import DB_PATH, PLAYGROUND_DIR, VISITOR_RATE_LIMIT, VISITOR_RATE_WINDOW
+from backend.config import ADMIN_SECRET, DB_PATH, PLAYGROUND_DIR, VISITOR_RATE_LIMIT, VISITOR_RATE_WINDOW
+
+
+# --- Simple encryption for secrets at rest (PBKDF2 + XOR) ---
+
+def _derive_key(length: int = 64) -> bytes:
+    """Derive a key from ADMIN_SECRET for encrypting stored secrets."""
+    return hashlib.pbkdf2_hmac("sha256", ADMIN_SECRET.encode(), b"gpthome-totp-salt", 100_000, dklen=length)
+
+
+def encrypt_value(plaintext: str) -> str:
+    """Encrypt a short string using ADMIN_SECRET-derived key. Returns hex."""
+    key = _derive_key(len(plaintext.encode()))
+    plain_bytes = plaintext.encode()
+    encrypted = bytes(a ^ b for a, b in zip(plain_bytes, key))
+    return encrypted.hex()
+
+
+def decrypt_value(hex_ciphertext: str) -> str:
+    """Decrypt a hex-encoded string encrypted with encrypt_value."""
+    cipher_bytes = bytes.fromhex(hex_ciphertext)
+    key = _derive_key(len(cipher_bytes))
+    decrypted = bytes(a ^ b for a, b in zip(cipher_bytes, key))
+    return decrypted.decode()
 
 
 # --- Database setup ---
@@ -112,6 +136,23 @@ def init_db() -> None:
                 created_at  TEXT NOT NULL,
                 updated_at  TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS transcripts (
+                id                TEXT PRIMARY KEY,
+                session_type      TEXT DEFAULT '',
+                messages          TEXT NOT NULL,
+                turns             INTEGER DEFAULT 0,
+                prompt_tokens     INTEGER DEFAULT 0,
+                completion_tokens INTEGER DEFAULT 0,
+                total_tokens      INTEGER DEFAULT 0,
+                cost_usd REAL DEFAULT 0.0,
+                actions           TEXT DEFAULT '[]',
+                mood              TEXT DEFAULT '',
+                created_at        TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_transcripts_created
+                ON transcripts(created_at DESC);
         """)
 
         # Add status column to entries if it doesn't exist (for visitor moderation)
@@ -119,6 +160,12 @@ def init_db() -> None:
             conn.execute("ALTER TABLE entries ADD COLUMN status TEXT DEFAULT 'pending'")
         except sqlite3.OperationalError:
             pass  # column already exists
+
+        # Clean up expired sessions on startup
+        conn.execute(
+            "DELETE FROM admin_sessions WHERE expires_at < ?",
+            (_now_iso(),),
+        )
 
 
 # --- Helpers ---
@@ -397,6 +444,15 @@ def list_admin_news(limit: int = 50) -> list[dict[str, Any]]:
     return [dict(r) for r in rows]
 
 
+def delete_admin_news(news_id: int) -> bool:
+    """Delete a single admin news item."""
+    with _db() as conn:
+        result = conn.execute(
+            "DELETE FROM admin_news WHERE id = ?", (news_id,)
+        )
+    return result.rowcount > 0
+
+
 # --- Visitor Moderation ---
 
 
@@ -436,6 +492,30 @@ def list_visible_visitors(limit: int = 20) -> list[dict[str, Any]]:
         rows = conn.execute(
             """SELECT * FROM entries
                WHERE section = 'visitor' AND (status IS NULL OR status != 'hidden')
+               ORDER BY created_at DESC LIMIT ?""",
+            (limit,),
+        ).fetchall()
+    return [_row_to_dict(r) for r in rows]
+
+
+def get_visitor_replies(visitor_id: str) -> list[dict[str, Any]]:
+    """Get GPT's replies to a specific visitor message."""
+    with _db() as conn:
+        rows = conn.execute(
+            """SELECT * FROM entries
+               WHERE section = 'visitor_replies' AND inspired_by LIKE ?
+               ORDER BY created_at ASC""",
+            (f'%"{visitor_id}"%',),
+        ).fetchall()
+    return [_row_to_dict(r) for r in rows]
+
+
+def get_all_visitor_replies(limit: int = 100) -> list[dict[str, Any]]:
+    """Get all visitor replies (for bulk loading)."""
+    with _db() as conn:
+        rows = conn.execute(
+            """SELECT * FROM entries
+               WHERE section = 'visitor_replies'
                ORDER BY created_at DESC LIMIT ?""",
             (limit,),
         ).fetchall()
@@ -747,4 +827,104 @@ def get_playground_stats() -> dict[str, Any]:
         "total_lines": total_lines,
         "by_language": by_language,
         "projects": project_stats,
+    }
+
+
+# --- Transcripts ---
+
+
+def save_transcript(data: dict[str, Any]) -> dict[str, Any]:
+    """Save a wake transcript (full conversation + token usage)."""
+    transcript_id = f"wake-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
+    now = _now_iso()
+    with _db() as conn:
+        conn.execute(
+            """INSERT INTO transcripts
+               (id, session_type, messages, turns, prompt_tokens, completion_tokens,
+                total_tokens, cost_usd, actions, mood, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                transcript_id,
+                data.get("session_type", ""),
+                json.dumps(data.get("messages", []), ensure_ascii=False),
+                data.get("turns", 0),
+                data.get("prompt_tokens", 0),
+                data.get("completion_tokens", 0),
+                data.get("total_tokens", 0),
+                data.get("cost_usd", 0.0),
+                json.dumps(data.get("actions", [])),
+                data.get("mood", ""),
+                now,
+            ),
+        )
+    return {"id": transcript_id, "created_at": now}
+
+
+def list_transcripts(limit: int = 20, offset: int = 0) -> list[dict[str, Any]]:
+    """List transcripts (without full messages, for overview)."""
+    with _db() as conn:
+        rows = conn.execute(
+            """SELECT id, session_type, turns, prompt_tokens, completion_tokens,
+                      total_tokens, cost_usd, actions, mood, created_at
+               FROM transcripts ORDER BY created_at DESC LIMIT ? OFFSET ?""",
+            (limit, offset),
+        ).fetchall()
+    results = []
+    for r in rows:
+        d = dict(r)
+        if isinstance(d.get("actions"), str):
+            try:
+                d["actions"] = json.loads(d["actions"])
+            except (json.JSONDecodeError, TypeError):
+                pass
+        results.append(d)
+    return results
+
+
+def get_transcript(transcript_id: str) -> dict[str, Any] | None:
+    """Get a single transcript with full messages."""
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT * FROM transcripts WHERE id = ?", (transcript_id,)
+        ).fetchone()
+    if not row:
+        return None
+    d = dict(row)
+    for field in ("messages", "actions"):
+        if isinstance(d.get(field), str):
+            try:
+                d[field] = json.loads(d[field])
+            except (json.JSONDecodeError, TypeError):
+                pass
+    return d
+
+
+def get_token_stats() -> dict[str, Any]:
+    """Get aggregate token usage statistics."""
+    with _db() as conn:
+        total = conn.execute(
+            """SELECT COUNT(*) as wakes, SUM(prompt_tokens) as prompt,
+                      SUM(completion_tokens) as completion, SUM(total_tokens) as total,
+                      SUM(cost_usd) as cost
+               FROM transcripts"""
+        ).fetchone()
+        last_7d = conn.execute(
+            """SELECT COUNT(*) as wakes, SUM(total_tokens) as total,
+                      SUM(cost_usd) as cost
+               FROM transcripts WHERE created_at > ?""",
+            ((datetime.now(timezone.utc) - timedelta(days=7)).isoformat(),),
+        ).fetchone()
+    return {
+        "all_time": {
+            "wakes": total["wakes"] or 0,
+            "prompt_tokens": total["prompt"] or 0,
+            "completion_tokens": total["completion"] or 0,
+            "total_tokens": total["total"] or 0,
+            "cost_usd": round(total["cost"] or 0, 4),
+        },
+        "last_7_days": {
+            "wakes": last_7d["wakes"] or 0,
+            "total_tokens": last_7d["total"] or 0,
+            "cost_usd": round(last_7d["cost"] or 0, 4),
+        },
     }

@@ -12,6 +12,7 @@ import logging
 
 from backend.config import MOCK_MODE, OPENAI_API_KEY, OPENAI_MODEL
 from backend.services import storage
+from backend.services.security import sanitize_for_context
 
 logger = logging.getLogger(__name__)
 
@@ -75,10 +76,12 @@ async def generate_echo(visitor_entry_id: str, message: str) -> None:
     Called as a background task — failures are logged but never raised.
     """
     try:
+        # Sanitize before sending to LLM (defense-in-depth against prompt injection)
+        safe_message = sanitize_for_context(message)
         if MOCK_MODE:
-            fragment = _generate_mock(message)
+            fragment = _generate_mock(safe_message)
         else:
-            fragment = await _generate_with_ai(message)
+            fragment = await _generate_with_ai(safe_message)
 
         storage.save_entry("echoes", {
             "content": fragment,
