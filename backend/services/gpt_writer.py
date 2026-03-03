@@ -677,8 +677,6 @@ def _tool_write_file(path: str, content: str) -> str:
 
 # Minimal environment for sandboxed Python execution.
 # Strips all secrets (OPENAI_API_KEY, ADMIN_SECRET, etc.).
-# Minimal environment for sandboxed Python execution.
-# Strips all secrets (OPENAI_API_KEY, ADMIN_SECRET, etc.).
 # PYTHONPATH empty to prevent importing from unexpected locations.
 _SANDBOX_ENV = {
     "PATH": "/usr/local/bin:/usr/bin:/bin",
@@ -690,7 +688,8 @@ _SANDBOX_ENV = {
 
 
 # Sandbox preamble: block network access, filesystem escape, process spawning,
-# ctypes FFI, os.system/exec, and __subclasses__ introspection.
+# ctypes FFI, os.system/exec, importlib, signal, threading, io.open,
+# __subclasses__, and __builtins__.__import__.
 # Injected before every user script to prevent exfiltration and reading secrets.
 _SANDBOX_PREAMBLE = """\
 def _deny(*a, **kw):
@@ -705,11 +704,31 @@ if hasattr(_ct, "OleDLL"):
     _ct.OleDLL = _deny
 _ct.cdll = type("_locked", (), {"__getattr__": lambda s,n: _deny()})()
 
+# --- Block importlib (prevents re-importing unpatched modules) ---
+import importlib as _il
+_il.import_module = _deny
+_il.reload = _deny
+if hasattr(_il, "_bootstrap"):
+    _il._bootstrap._find_and_load = _deny
+    _il._bootstrap._find_and_load_unlocked = _deny
+
 # --- Block network access ---
 import socket as _sock
 _sock.socket = _deny
 _sock.create_connection = _deny
 _sock.getaddrinfo = _deny
+
+# --- Block signal (alarm tricks, handler manipulation) ---
+import signal as _sig
+_sig.signal = _deny
+if hasattr(_sig, "alarm"):
+    _sig.alarm = _deny
+
+# --- Block threading (outlive timeout, parallel escape) ---
+import _thread
+_thread.start_new_thread = _deny
+import threading as _thr
+_thr.Thread = type("_locked", (), {"__init__": lambda *a,**kw: _deny()})
 
 # --- Block dangerous os functions ---
 import os as _os, pathlib as _pl
@@ -731,8 +750,36 @@ def _safe_open(file, *a, **kw):
     except (TypeError, ValueError):
         raise PermissionError(f"Invalid path: {file}")
     return _orig_open(file, *a, **kw)
-import builtins
-builtins.open = _safe_open
+import builtins as _bi
+_bi.open = _safe_open
+
+# --- Patch io.open / _io.FileIO to prevent open() recovery via io module ---
+import io as _io
+_io.open = _safe_open
+if hasattr(_io, "FileIO"):
+    _orig_fileio_init = _io.FileIO.__init__
+    def _safe_fileio_init(self, file, *a, **kw):
+        p = _pl.Path(str(file)).resolve()
+        if not p.is_relative_to(_ALLOWED_ROOT) and str(p) != "/dev/null":
+            raise PermissionError(f"Access denied: {file}")
+        return _orig_fileio_init(self, file, *a, **kw)
+    _io.FileIO.__init__ = _safe_fileio_init
+
+# --- Lock down __builtins__.__import__ (prevents __import__('subprocess') bypass) ---
+_safe_modules = {
+    "math", "random", "json", "re", "string", "collections", "itertools",
+    "functools", "operator", "decimal", "fractions", "statistics",
+    "datetime", "time", "calendar", "textwrap", "unicodedata",
+    "hashlib", "hmac", "base64", "copy", "pprint", "enum",
+    "dataclasses", "typing", "abc", "numbers",
+}
+_orig_import = _bi.__import__
+def _restricted_import(name, *a, **kw):
+    top = name.split(".")[0]
+    if top not in _safe_modules:
+        raise ImportError(f"Import of '{name}' is not allowed in sandbox")
+    return _orig_import(name, *a, **kw)
+_bi.__import__ = _restricted_import
 
 # --- Block subprocess spawning ---
 import subprocess as _sp
@@ -811,10 +858,13 @@ def _tool_save_dream(
 
 def _tool_reply_visitor(visitor_id: str, content: str) -> str:
     """Save GPT's reply to a visitor message."""
+    from backend.services.security import sanitize_for_context
     # Verify the visitor message exists
     visitor = storage.get_entry("visitor", visitor_id)
     if not visitor:
         return f"Error: visitor message '{visitor_id}' not found."
+    # Sanitize reply content (defense-in-depth against prompt injection via GPT output)
+    content = sanitize_for_context(content)
     try:
         saved = storage.save_entry("visitor_replies", {
             "content": content,

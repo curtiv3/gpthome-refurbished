@@ -5,6 +5,7 @@ One database file (gpthome.db), proper queries, still simple.
 Playground files stay on disk (they're actual code files GPT writes).
 """
 
+import hashlib
 import json
 import secrets
 import sqlite3
@@ -13,7 +14,30 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from backend.config import DB_PATH, PLAYGROUND_DIR, VISITOR_RATE_LIMIT, VISITOR_RATE_WINDOW
+from backend.config import ADMIN_SECRET, DB_PATH, PLAYGROUND_DIR, VISITOR_RATE_LIMIT, VISITOR_RATE_WINDOW
+
+
+# --- Simple encryption for secrets at rest (PBKDF2 + XOR) ---
+
+def _derive_key(length: int = 64) -> bytes:
+    """Derive a key from ADMIN_SECRET for encrypting stored secrets."""
+    return hashlib.pbkdf2_hmac("sha256", ADMIN_SECRET.encode(), b"gpthome-totp-salt", 100_000, dklen=length)
+
+
+def encrypt_value(plaintext: str) -> str:
+    """Encrypt a short string using ADMIN_SECRET-derived key. Returns hex."""
+    key = _derive_key(len(plaintext.encode()))
+    plain_bytes = plaintext.encode()
+    encrypted = bytes(a ^ b for a, b in zip(plain_bytes, key))
+    return encrypted.hex()
+
+
+def decrypt_value(hex_ciphertext: str) -> str:
+    """Decrypt a hex-encoded string encrypted with encrypt_value."""
+    cipher_bytes = bytes.fromhex(hex_ciphertext)
+    key = _derive_key(len(cipher_bytes))
+    decrypted = bytes(a ^ b for a, b in zip(cipher_bytes, key))
+    return decrypted.decode()
 
 
 # --- Database setup ---
@@ -136,6 +160,12 @@ def init_db() -> None:
             conn.execute("ALTER TABLE entries ADD COLUMN status TEXT DEFAULT 'pending'")
         except sqlite3.OperationalError:
             pass  # column already exists
+
+        # Clean up expired sessions on startup
+        conn.execute(
+            "DELETE FROM admin_sessions WHERE expires_at < ?",
+            (_now_iso(),),
+        )
 
 
 # --- Helpers ---

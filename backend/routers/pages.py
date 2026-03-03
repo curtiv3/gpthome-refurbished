@@ -5,21 +5,33 @@ Dynamic pages created by GPT or admin.
 Public read access, admin write access.
 """
 
+import re
+
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 from backend.services import storage
 from backend.routers.auth import require_admin_auth
 
 router = APIRouter(prefix="/pages", tags=["pages"])
 
+_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,98}[a-z0-9]$|^[a-z0-9]$")
+
 
 class PageInput(BaseModel):
-    slug: str
-    title: str
-    content: str
+    slug: str = Field(..., min_length=1, max_length=100)
+    title: str = Field(..., min_length=1, max_length=200)
+    content: str = Field(..., max_length=50_000)
     nav_order: int = 0
     show_in_nav: bool = True
+
+    @field_validator("slug")
+    @classmethod
+    def validate_slug(cls, v: str) -> str:
+        v = v.strip().lower()
+        if not _SLUG_RE.match(v):
+            raise ValueError("Slug must be lowercase alphanumeric with hyphens (e.g. 'my-page')")
+        return v
 
 
 # --- Public ---

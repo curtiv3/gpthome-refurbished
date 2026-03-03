@@ -220,7 +220,7 @@ def totp_setup(x_admin_key: str = Header(...)):
         raise HTTPException(status_code=409, detail="TOTP already configured. Use /totp/reset to reconfigure.")
 
     secret = pyotp.random_base32()
-    storage.set_setting("totp_secret", secret)
+    storage.set_setting("totp_secret", storage.encrypt_value(secret))
 
     totp = pyotp.TOTP(secret)
     uri = totp.provisioning_uri(name="admin", issuer_name=TOTP_ISSUER)
@@ -236,7 +236,7 @@ def totp_reset(x_admin_key: str = Header(...)):
         raise HTTPException(status_code=403, detail="Admin key required")
 
     secret = pyotp.random_base32()
-    storage.set_setting("totp_secret", secret)
+    storage.set_setting("totp_secret", storage.encrypt_value(secret))
 
     totp = pyotp.TOTP(secret)
     uri = totp.provisioning_uri(name="admin", issuer_name=TOTP_ISSUER)
@@ -245,10 +245,22 @@ def totp_reset(x_admin_key: str = Header(...)):
     return {"secret": secret, "uri": uri}
 
 
+def _get_totp_secret() -> str | None:
+    """Retrieve and decrypt the TOTP secret. Handles both encrypted and legacy plaintext."""
+    stored = storage.get_setting("totp_secret")
+    if not stored:
+        return None
+    try:
+        return storage.decrypt_value(stored)
+    except (ValueError, UnicodeDecodeError):
+        # Legacy: plaintext secret from before encryption was added
+        return stored
+
+
 @router.post("/totp/verify", dependencies=[Depends(_check_login_rate)])
 def totp_verify(data: TOTPVerify):
     """Verify TOTP code and return session token."""
-    secret = storage.get_setting("totp_secret")
+    secret = _get_totp_secret()
     if not secret:
         raise HTTPException(status_code=501, detail="TOTP not configured")
 
@@ -298,6 +310,6 @@ def available_methods():
     methods = ["secret_key"]
     if GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET:
         methods.append("github")
-    if storage.get_setting("totp_secret"):
+    if _get_totp_secret():
         methods.append("totp")
     return {"methods": methods}

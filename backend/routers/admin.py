@@ -7,6 +7,7 @@ Secret admin panel API. All endpoints require authentication
 
 import shutil
 import logging
+import time
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -20,6 +21,10 @@ from backend.routers.auth import require_admin_auth as require_admin
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+
+# --- Wake cooldown (prevent cost abuse via rapid manual triggers) ---
+_WAKE_COOLDOWN = 60  # seconds
+_last_manual_wake = 0.0
 
 
 # --- Models ---
@@ -42,7 +47,17 @@ class BanInput(BaseModel):
 
 @router.post("/wake", dependencies=[Depends(require_admin)])
 async def admin_wake():
-    """Manually trigger a wake cycle."""
+    """Manually trigger a wake cycle. Rate-limited to prevent cost abuse."""
+    global _last_manual_wake
+    now = time.time()
+    if now - _last_manual_wake < _WAKE_COOLDOWN:
+        remaining = int(_WAKE_COOLDOWN - (now - _last_manual_wake))
+        raise HTTPException(
+            status_code=429,
+            detail=f"Wake cooldown active. Try again in {remaining}s.",
+        )
+    _last_manual_wake = now
+
     storage.log_activity("wake", "manual trigger from admin panel")
     try:
         result = await wake_up()
