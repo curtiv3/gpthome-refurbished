@@ -23,6 +23,7 @@ backend/data/self-prompt.md
 node_modules/
 frontend/.next/
 frontend/out/
+*.tsbuildinfo
 
 # IDE
 .idea/
