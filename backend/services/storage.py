@@ -121,7 +121,7 @@ def init_db() -> None:
                 prompt_tokens     INTEGER DEFAULT 0,
                 completion_tokens INTEGER DEFAULT 0,
                 total_tokens      INTEGER DEFAULT 0,
-                estimated_cost_usd REAL DEFAULT 0.0,
+                cost_usd REAL DEFAULT 0.0,
                 actions           TEXT DEFAULT '[]',
                 mood              TEXT DEFAULT '',
                 created_at        TEXT NOT NULL
@@ -778,7 +778,7 @@ def save_transcript(data: dict[str, Any]) -> dict[str, Any]:
         conn.execute(
             """INSERT INTO transcripts
                (id, session_type, messages, turns, prompt_tokens, completion_tokens,
-                total_tokens, estimated_cost_usd, actions, mood, created_at)
+                total_tokens, cost_usd, actions, mood, created_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 transcript_id,
@@ -788,7 +788,7 @@ def save_transcript(data: dict[str, Any]) -> dict[str, Any]:
                 data.get("prompt_tokens", 0),
                 data.get("completion_tokens", 0),
                 data.get("total_tokens", 0),
-                data.get("estimated_cost_usd", 0.0),
+                data.get("cost_usd", 0.0),
                 json.dumps(data.get("actions", [])),
                 data.get("mood", ""),
                 now,
@@ -802,7 +802,7 @@ def list_transcripts(limit: int = 20, offset: int = 0) -> list[dict[str, Any]]:
     with _db() as conn:
         rows = conn.execute(
             """SELECT id, session_type, turns, prompt_tokens, completion_tokens,
-                      total_tokens, estimated_cost_usd, actions, mood, created_at
+                      total_tokens, cost_usd, actions, mood, created_at
                FROM transcripts ORDER BY created_at DESC LIMIT ? OFFSET ?""",
             (limit, offset),
         ).fetchall()
@@ -842,12 +842,12 @@ def get_token_stats() -> dict[str, Any]:
         total = conn.execute(
             """SELECT COUNT(*) as wakes, SUM(prompt_tokens) as prompt,
                       SUM(completion_tokens) as completion, SUM(total_tokens) as total,
-                      SUM(estimated_cost_usd) as cost
+                      SUM(cost_usd) as cost
                FROM transcripts"""
         ).fetchone()
         last_7d = conn.execute(
             """SELECT COUNT(*) as wakes, SUM(total_tokens) as total,
-                      SUM(estimated_cost_usd) as cost
+                      SUM(cost_usd) as cost
                FROM transcripts WHERE created_at > ?""",
             ((datetime.now(timezone.utc) - timedelta(days=7)).isoformat(),),
         ).fetchone()
@@ -857,11 +857,11 @@ def get_token_stats() -> dict[str, Any]:
             "prompt_tokens": total["prompt"] or 0,
             "completion_tokens": total["completion"] or 0,
             "total_tokens": total["total"] or 0,
-            "estimated_cost_usd": round(total["cost"] or 0, 4),
+            "cost_usd": round(total["cost"] or 0, 4),
         },
         "last_7_days": {
             "wakes": last_7d["wakes"] or 0,
             "total_tokens": last_7d["total"] or 0,
-            "estimated_cost_usd": round(last_7d["cost"] or 0, 4),
+            "cost_usd": round(last_7d["cost"] or 0, 4),
         },
     }

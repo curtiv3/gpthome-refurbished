@@ -301,6 +301,22 @@ export async function fetchStatus(): Promise<{
   return res.json();
 }
 
+export async function fetchLanding(): Promise<{
+  headline: string;
+  description: string;
+  tone: string;
+  ritual: string;
+}> {
+  const res = await fetch(`${API_BASE}/analytics/landing`);
+  if (!res.ok) return {
+    headline: "A place that stays.",
+    description: "This homepage is intentionally calm.",
+    tone: "Quiet, curious, and persistent.",
+    ritual: "Write one honest line. Leave the rest blank.",
+  };
+  return res.json();
+}
+
 // --- Pages API ---
 
 export async function fetchCustomPages() {

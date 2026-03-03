@@ -15,6 +15,7 @@ import subprocess
 from openai import AsyncOpenAI
 
 from backend.config import (
+    BASE_DIR,
     DATA_DIR,
     GPT_TEMPERATURE,
     MAX_WAKE_TURNS,
@@ -22,6 +23,8 @@ from backend.config import (
     OPENAI_MODEL,
     PLAYGROUND_DIR,
 )
+
+FRONTEND_APP_DIR = BASE_DIR.parent / "frontend" / "app"
 from backend.services import storage
 
 logger = logging.getLogger(__name__)
@@ -42,7 +45,7 @@ _TOOLS: list[dict] = [
         "type": "function",
         "function": {
             "name": "read_file",
-            "description": "Read a file in your home directory.",
+            "description": "Read a file in your home directory or your frontend source code.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -51,7 +54,8 @@ _TOOLS: list[dict] = [
                         "description": (
                             "Path relative to your home. "
                             "Examples: 'self-prompt.md', 'playground/my-proj/main.py', "
-                            "'visitors/recent.txt', 'news/all.txt'"
+                            "'visitors/recent.txt', 'news/all.txt', "
+                            "'frontend/app/page.tsx' (read-only)"
                         ),
                     }
                 },
@@ -87,7 +91,7 @@ _TOOLS: list[dict] = [
         "type": "function",
         "function": {
             "name": "list_directory",
-            "description": "List files and subdirectories.",
+            "description": "List files and subdirectories. Use 'frontend' to see your homepage source.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -95,7 +99,8 @@ _TOOLS: list[dict] = [
                         "type": "string",
                         "description": (
                             "Directory path relative to your home. "
-                            "Use '.' for the top-level view."
+                            "Use '.' for the top-level view. "
+                            "Use 'frontend' or 'frontend/app/...' to browse your homepage code (read-only)."
                         ),
                     }
                 },
@@ -207,6 +212,38 @@ _TOOLS: list[dict] = [
                     },
                 },
                 "required": ["summary", "mood"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "save_page",
+            "description": (
+                "Create or update a custom page on your homepage. "
+                "Appears at /page/{slug}. Content is Markdown."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "slug": {
+                        "type": "string",
+                        "description": "URL slug (kebab-case, e.g. 'about-me')",
+                    },
+                    "title": {
+                        "type": "string",
+                        "description": "Page title",
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Markdown content for the page",
+                    },
+                    "show_in_nav": {
+                        "type": "boolean",
+                        "description": "Show in the navigation menu (default: true)",
+                    },
+                },
+                "required": ["slug", "title", "content"],
             },
         },
     },
@@ -341,6 +378,10 @@ def _tool_list_directory(path: str) -> str:
             return "gifts/ — empty."
         return "gifts/:\n" + "\n".join(f"  {i.name}" for i in sorted(items))
 
+    # Frontend (read-only): frontend/app/...
+    if norm == "frontend" or norm.startswith("frontend/"):
+        return _list_frontend_dir(norm)
+
     # Real filesystem
     safe = _resolve_safe(norm)
     if safe is None:
@@ -408,6 +449,10 @@ def _tool_read_file(path: str) -> str:
             lines.append("")
         return "\n".join(lines)
 
+    # Frontend (read-only): frontend/app/...
+    if norm.startswith("frontend/"):
+        return _read_frontend_file(norm)
+
     # Real filesystem
     safe = _resolve_safe(norm)
     if safe is None:
@@ -421,6 +466,75 @@ def _tool_read_file(path: str) -> str:
         if len(text) > 8000:
             text = text[:8000] + f"\n\n[... truncated — {len(text)} total chars]"
         return text
+    except Exception as exc:
+        return f"Error reading '{norm}': {exc}"
+
+
+# ─── Frontend Read-Only Access ────────────────────────────────────────────────
+
+
+def _resolve_frontend_safe(raw: str):
+    """Resolve a frontend/ path to the actual filesystem. Read-only, no escape."""
+    # Strip the 'frontend/' prefix → resolve against FRONTEND_APP_DIR's parent
+    sub = raw.removeprefix("frontend/")
+    frontend_root = FRONTEND_APP_DIR.parent  # frontend/
+    try:
+        resolved = (frontend_root / sub).resolve()
+        if not resolved.is_relative_to(frontend_root.resolve()):
+            return None
+        return resolved
+    except Exception:
+        return None
+
+
+def _list_frontend_dir(norm: str) -> str:
+    if norm == "frontend":
+        # Show app/ directory overview
+        if not FRONTEND_APP_DIR.exists():
+            return "frontend/ — not found."
+        lines = ["frontend/app/ (read-only — your homepage source):"]
+        for item in sorted(FRONTEND_APP_DIR.iterdir()):
+            if item.name.startswith(".") or item.name == "__pycache__":
+                continue
+            suffix = "/" if item.is_dir() else f"  ({item.stat().st_size}B)"
+            lines.append(f"  {item.name}{suffix}")
+        return "\n".join(lines)
+
+    safe = _resolve_frontend_safe(norm)
+    if safe is None:
+        return "Error: invalid frontend path."
+    if not safe.exists():
+        return f"'{norm}' does not exist."
+    if not safe.is_dir():
+        return f"'{norm}' is a file. Use read_file to read it."
+    try:
+        items = sorted(safe.iterdir())
+        if not items:
+            return f"{norm}/ is empty."
+        lines = [f"{norm}/ (read-only):"]
+        for e in items:
+            if e.name.startswith(".") or e.name == "__pycache__":
+                continue
+            suffix = "/" if e.is_dir() else f"  ({e.stat().st_size}B)"
+            lines.append(f"  {e.name}{suffix}")
+        return "\n".join(lines)
+    except PermissionError:
+        return f"Permission denied: {norm}"
+
+
+def _read_frontend_file(norm: str) -> str:
+    safe = _resolve_frontend_safe(norm)
+    if safe is None:
+        return "Error: invalid frontend path."
+    if not safe.exists():
+        return f"'{norm}' does not exist."
+    if safe.is_dir():
+        return f"'{norm}' is a directory. Use list_directory instead."
+    try:
+        text = safe.read_text(encoding="utf-8", errors="replace")
+        if len(text) > 8000:
+            text = text[:8000] + f"\n\n[... truncated — {len(text)} total chars]"
+        return f"(read-only)\n{text}"
     except Exception as exc:
         return f"Error reading '{norm}': {exc}"
 
@@ -671,6 +785,29 @@ def _tool_save_dream(
         return f"Error saving dream: {exc}"
 
 
+def _tool_save_page(
+    slug: str,
+    title: str,
+    content: str,
+    show_in_nav: bool = True,
+) -> str:
+    slug = slug.strip().lower()
+    if not slug or slug in _PROTECTED_PAGE_SLUGS:
+        return f"Error: '{slug}' is a protected or invalid page slug."
+    try:
+        storage.save_custom_page(
+            slug=slug,
+            title=title,
+            content=content,
+            created_by="gpt",
+            show_in_nav=show_in_nav,
+        )
+        storage.log_activity("page_saved", f"/{slug}")
+        return f"Page saved: /{slug} (title: {title!r}, {len(content)} chars, nav={'yes' if show_in_nav else 'no'})"
+    except Exception as exc:
+        return f"Error saving page '{slug}': {exc}"
+
+
 # ─── Tool Dispatch ────────────────────────────────────────────────────────────
 
 def _execute_tool(name: str, args: dict) -> str:
@@ -695,6 +832,13 @@ def _execute_tool(name: str, args: dict) -> str:
                 args["content"],
                 args.get("mood", ""),
                 args.get("inspired_by"),
+            )
+        if name == "save_page":
+            return _tool_save_page(
+                args["slug"],
+                args["title"],
+                args["content"],
+                args.get("show_in_nav", True),
             )
         if name == "done":
             return "done"   # Handled by caller
@@ -732,7 +876,7 @@ _COST_PER_1M_PROMPT = 2.50
 _COST_PER_1M_COMPLETION = 10.00
 
 
-def _estimate_cost(prompt_tokens: int, completion_tokens: int) -> float:
+def _calculate_cost(prompt_tokens: int, completion_tokens: int) -> float:
     return round(
         prompt_tokens * _COST_PER_1M_PROMPT / 1_000_000
         + completion_tokens * _COST_PER_1M_COMPLETION / 1_000_000,
@@ -740,13 +884,13 @@ def _estimate_cost(prompt_tokens: int, completion_tokens: int) -> float:
     )
 
 
-async def wake(system_prompt: str, user_prompt: str) -> dict:
+async def wake(system_prompt: str, user_prompt: str, *, session_type: str = "") -> dict:
     """
     Agentic wake loop using OpenAI function calling.
 
     GPT receives context + tools. It explores, creates, and ends by calling done().
     Returns {actions_taken, files_written, mood, summary, self_prompt, turns,
-             prompt_tokens, completion_tokens, total_tokens, estimated_cost_usd}.
+             prompt_tokens, completion_tokens, total_tokens, cost_usd}.
     """
     messages: list[dict] = [
         {"role": "system", "content": system_prompt},
@@ -764,24 +908,25 @@ async def wake(system_prompt: str, user_prompt: str) -> dict:
     _ACTION_MAP = {
         "save_thought": "thought",
         "save_dream":   "dream",
+        "save_page":    "page",
         "write_file":   "file_write",
         "run_python":   "code_run",
     }
 
     def _build_result(mood: str, summary: str, self_prompt: str, turns: int) -> dict:
-        cost = _estimate_cost(prompt_tokens, completion_tokens)
+        cost = _calculate_cost(prompt_tokens, completion_tokens)
         unique_actions = list(dict.fromkeys(actions_taken))
 
         # Save transcript
         try:
             storage.save_transcript({
-                "session_type": "wake",
+                "session_type": session_type or "wake",
                 "messages": messages,
                 "turns": turns,
                 "prompt_tokens": prompt_tokens,
                 "completion_tokens": completion_tokens,
                 "total_tokens": total_tokens,
-                "estimated_cost_usd": cost,
+                "cost_usd": cost,
                 "actions": unique_actions,
                 "mood": mood,
             })
@@ -798,7 +943,7 @@ async def wake(system_prompt: str, user_prompt: str) -> dict:
             "prompt_tokens":      prompt_tokens,
             "completion_tokens":  completion_tokens,
             "total_tokens":       total_tokens,
-            "estimated_cost_usd": cost,
+            "cost_usd": cost,
         }
 
     for turn in range(MAX_WAKE_TURNS):
@@ -879,13 +1024,13 @@ async def wake(system_prompt: str, user_prompt: str) -> dict:
                 logger.info(
                     "done() — mood=%s  turns=%d  tokens=%d (p:%d c:%d)  cost=$%.4f  actions=%s",
                     mood, turn + 1, total_tokens, prompt_tokens, completion_tokens,
-                    _estimate_cost(prompt_tokens, completion_tokens),
+                    _calculate_cost(prompt_tokens, completion_tokens),
                     list(dict.fromkeys(actions_taken)),
                 )
                 storage.log_activity(
                     "wake_done",
                     f"mood={mood}  turns={turn+1}  tokens={total_tokens}  "
-                    f"cost=${_estimate_cost(prompt_tokens, completion_tokens):.4f}  "
+                    f"cost=${_calculate_cost(prompt_tokens, completion_tokens):.4f}  "
                     f"actions={list(dict.fromkeys(actions_taken))}",
                 )
                 return _build_result(mood, summary, self_prompt, turn + 1)
@@ -902,13 +1047,13 @@ async def wake(system_prompt: str, user_prompt: str) -> dict:
     logger.warning(
         "Wake ended without done() — turns=%d  tokens=%d  cost=$%.4f  actions=%s",
         actual_turns, total_tokens,
-        _estimate_cost(prompt_tokens, completion_tokens),
+        _calculate_cost(prompt_tokens, completion_tokens),
         list(dict.fromkeys(actions_taken)),
     )
     storage.log_activity(
         "wake_done",
         f"no_done  turns={actual_turns}  tokens={total_tokens}  "
-        f"cost=${_estimate_cost(prompt_tokens, completion_tokens):.4f}  "
+        f"cost=${_calculate_cost(prompt_tokens, completion_tokens):.4f}  "
         f"actions={list(dict.fromkeys(actions_taken))}",
     )
     return _build_result("quiet", "Ended without calling done()", "", actual_turns)
