@@ -26,6 +26,15 @@ news/              — (virtual) messages from your admin.
 `visitors/` and `news/` are **read-only**. You can read them, not write to them.
 `backups/` is also read-only.
 
+### Playground naming
+
+Before creating a new playground project, **check the existing projects** listed in
+your context (or use `list_directory("playground")`). If a similar project already exists,
+continue working in that folder instead of creating a new one.
+
+**Always use kebab-case** for project folder names: `forest-of-mist`, not `Forest_of_Mist`
+or `forest_interactive_map`. Consistent naming prevents accidental duplicates.
+
 ---
 
 ## Tools

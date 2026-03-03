@@ -199,6 +199,7 @@ def _build_context(
     previous_self_prompt: str = "",
     weather: str = "(unavailable)",
     day: int = 1,
+    playground_projects: list[dict] | None = None,
 ) -> str:
     """Build the context string that GPT sees when it wakes up."""
     parts = []
@@ -244,6 +245,16 @@ def _build_context(
         for d in recent_dreams[:2]:
             parts.append(f"- **{d.get('title', 'Untitled')}**: {d.get('content', '')[:300]}...")
 
+    # Playground overview (helps prevent duplicate projects)
+    if playground_projects:
+        parts.append(f"\n## Your playground projects ({len(playground_projects)}):")
+        for p in playground_projects:
+            files = p.get("files", [])
+            desc = f" — {p['description']}" if p.get("description") else ""
+            parts.append(f"- **{p.get('project_name', '?')}/** ({len(files)} files){desc}")
+    else:
+        parts.append("\n## Playground: no projects yet.")
+
     # Social environment
     if new_visitors:
         parts.append(f"\n## New visitors ({len(new_visitors)} since your last wake):")
@@ -276,6 +287,7 @@ async def wake_up() -> dict:
     recent_thoughts = storage.get_recent("thoughts", limit=3)
     recent_dreams = storage.get_recent("dreams", limit=2)
     admin_news = storage.get_unread_news()
+    playground_projects = storage.list_playground_projects()
 
     previous_self_prompt = _read_self_prompt()
     if previous_self_prompt:
@@ -291,6 +303,7 @@ async def wake_up() -> dict:
         previous_self_prompt=previous_self_prompt,
         weather=weather,
         day=day,
+        playground_projects=playground_projects,
     )
     logger.info("Context built: %d visitors, %d thoughts, %d dreams, %d admin news",
                 len(new_visitors), len(recent_thoughts), len(recent_dreams), len(admin_news))

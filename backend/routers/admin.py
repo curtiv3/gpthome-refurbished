@@ -216,3 +216,26 @@ def rate_limit_info():
         "settings": storage.get_rate_limit_settings(),
         "blocked": storage.list_blocked(),
     }
+
+
+# === Transcripts ===
+
+
+@router.get("/transcripts", dependencies=[Depends(require_admin)])
+def list_transcripts(limit: int = 20, offset: int = 0):
+    """List wake transcripts (overview, no full messages)."""
+    limit = max(1, min(limit, 100))
+    offset = max(0, offset)
+    return {
+        "transcripts": storage.list_transcripts(limit=limit, offset=offset),
+        "token_stats": storage.get_token_stats(),
+    }
+
+
+@router.get("/transcripts/{transcript_id}", dependencies=[Depends(require_admin)])
+def get_transcript(transcript_id: str):
+    """Get a single transcript with full conversation."""
+    t = storage.get_transcript(transcript_id)
+    if not t:
+        raise HTTPException(status_code=404, detail="Transcript not found")
+    return t

@@ -112,6 +112,23 @@ def init_db() -> None:
                 created_at  TEXT NOT NULL,
                 updated_at  TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS transcripts (
+                id                TEXT PRIMARY KEY,
+                session_type      TEXT DEFAULT '',
+                messages          TEXT NOT NULL,
+                turns             INTEGER DEFAULT 0,
+                prompt_tokens     INTEGER DEFAULT 0,
+                completion_tokens INTEGER DEFAULT 0,
+                total_tokens      INTEGER DEFAULT 0,
+                estimated_cost_usd REAL DEFAULT 0.0,
+                actions           TEXT DEFAULT '[]',
+                mood              TEXT DEFAULT '',
+                created_at        TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_transcripts_created
+                ON transcripts(created_at DESC);
         """)
 
         # Add status column to entries if it doesn't exist (for visitor moderation)
@@ -747,4 +764,104 @@ def get_playground_stats() -> dict[str, Any]:
         "total_lines": total_lines,
         "by_language": by_language,
         "projects": project_stats,
+    }
+
+
+# --- Transcripts ---
+
+
+def save_transcript(data: dict[str, Any]) -> dict[str, Any]:
+    """Save a wake transcript (full conversation + token usage)."""
+    transcript_id = f"wake-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
+    now = _now_iso()
+    with _db() as conn:
+        conn.execute(
+            """INSERT INTO transcripts
+               (id, session_type, messages, turns, prompt_tokens, completion_tokens,
+                total_tokens, estimated_cost_usd, actions, mood, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                transcript_id,
+                data.get("session_type", ""),
+                json.dumps(data.get("messages", []), ensure_ascii=False),
+                data.get("turns", 0),
+                data.get("prompt_tokens", 0),
+                data.get("completion_tokens", 0),
+                data.get("total_tokens", 0),
+                data.get("estimated_cost_usd", 0.0),
+                json.dumps(data.get("actions", [])),
+                data.get("mood", ""),
+                now,
+            ),
+        )
+    return {"id": transcript_id, "created_at": now}
+
+
+def list_transcripts(limit: int = 20, offset: int = 0) -> list[dict[str, Any]]:
+    """List transcripts (without full messages, for overview)."""
+    with _db() as conn:
+        rows = conn.execute(
+            """SELECT id, session_type, turns, prompt_tokens, completion_tokens,
+                      total_tokens, estimated_cost_usd, actions, mood, created_at
+               FROM transcripts ORDER BY created_at DESC LIMIT ? OFFSET ?""",
+            (limit, offset),
+        ).fetchall()
+    results = []
+    for r in rows:
+        d = dict(r)
+        if isinstance(d.get("actions"), str):
+            try:
+                d["actions"] = json.loads(d["actions"])
+            except (json.JSONDecodeError, TypeError):
+                pass
+        results.append(d)
+    return results
+
+
+def get_transcript(transcript_id: str) -> dict[str, Any] | None:
+    """Get a single transcript with full messages."""
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT * FROM transcripts WHERE id = ?", (transcript_id,)
+        ).fetchone()
+    if not row:
+        return None
+    d = dict(row)
+    for field in ("messages", "actions"):
+        if isinstance(d.get(field), str):
+            try:
+                d[field] = json.loads(d[field])
+            except (json.JSONDecodeError, TypeError):
+                pass
+    return d
+
+
+def get_token_stats() -> dict[str, Any]:
+    """Get aggregate token usage statistics."""
+    with _db() as conn:
+        total = conn.execute(
+            """SELECT COUNT(*) as wakes, SUM(prompt_tokens) as prompt,
+                      SUM(completion_tokens) as completion, SUM(total_tokens) as total,
+                      SUM(estimated_cost_usd) as cost
+               FROM transcripts"""
+        ).fetchone()
+        last_7d = conn.execute(
+            """SELECT COUNT(*) as wakes, SUM(total_tokens) as total,
+                      SUM(estimated_cost_usd) as cost
+               FROM transcripts WHERE created_at > ?""",
+            ((datetime.now(timezone.utc) - timedelta(days=7)).isoformat(),),
+        ).fetchone()
+    return {
+        "all_time": {
+            "wakes": total["wakes"] or 0,
+            "prompt_tokens": total["prompt"] or 0,
+            "completion_tokens": total["completion"] or 0,
+            "total_tokens": total["total"] or 0,
+            "estimated_cost_usd": round(total["cost"] or 0, 4),
+        },
+        "last_7_days": {
+            "wakes": last_7d["wakes"] or 0,
+            "total_tokens": last_7d["total"] or 0,
+            "estimated_cost_usd": round(last_7d["cost"] or 0, 4),
+        },
     }

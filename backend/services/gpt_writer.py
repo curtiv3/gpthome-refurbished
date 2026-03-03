@@ -240,6 +240,26 @@ def _resolve_safe(raw: str):
         return None
 
 
+def _are_names_similar(a: str, b: str) -> bool:
+    """Check if two kebab-case project names are similar enough to be duplicates."""
+    # Exact match after normalization
+    if a == b:
+        return True
+    # One contains the other
+    if a in b or b in a:
+        return True
+    # Significant word overlap
+    words_a = set(a.split("-"))
+    words_b = set(b.split("-"))
+    words_a.discard("")
+    words_b.discard("")
+    if not words_a or not words_b:
+        return False
+    overlap = words_a & words_b
+    smaller = min(len(words_a), len(words_b))
+    return len(overlap) >= max(2, smaller * 0.6)
+
+
 def _is_write_blocked(path) -> bool:
     """True if writing to this path is forbidden."""
     try:
@@ -481,6 +501,30 @@ def _tool_write_file(path: str, content: str) -> str:
         return "Error: invalid or unsafe path."
     if _is_write_blocked(safe):
         return f"Error: '{norm}' is in a read-only area."
+
+    # Warn about potential duplicate playground projects
+    dupe_warning = ""
+    if norm.startswith("playground/") and not safe.exists():
+        parts_list = norm.split("/")
+        if len(parts_list) >= 3:
+            new_project = parts_list[1].lower().replace("_", "-")
+            try:
+                existing = [
+                    d.name for d in PLAYGROUND_DIR.iterdir()
+                    if d.is_dir() and d.name.lower().replace("_", "-") != new_project
+                ]
+                similar = [
+                    d for d in existing
+                    if _are_names_similar(new_project, d.lower().replace("_", "-"))
+                ]
+                if similar:
+                    dupe_warning = (
+                        f" WARNING: Similar project(s) already exist: {similar}. "
+                        "Consider using an existing folder instead of creating a new one."
+                    )
+            except Exception:
+                pass
+
     try:
         existed = safe.exists()
         safe.parent.mkdir(parents=True, exist_ok=True)
@@ -488,7 +532,7 @@ def _tool_write_file(path: str, content: str) -> str:
         # Log file changes so they appear in the activity feed
         event = "file_modified" if existed else "file_created"
         storage.log_activity(event, norm)
-        return f"Written: {norm} ({len(content)} chars)"
+        return f"Written: {norm} ({len(content)} chars){dupe_warning}"
     except Exception as exc:
         return f"Error writing '{norm}': {exc}"
 
@@ -683,12 +727,26 @@ def _msg_to_dict(msg) -> dict:
 
 # ─── Main Wake Loop ───────────────────────────────────────────────────────────
 
+# gpt-4o pricing (per 1M tokens) — update when model changes
+_COST_PER_1M_PROMPT = 2.50
+_COST_PER_1M_COMPLETION = 10.00
+
+
+def _estimate_cost(prompt_tokens: int, completion_tokens: int) -> float:
+    return round(
+        prompt_tokens * _COST_PER_1M_PROMPT / 1_000_000
+        + completion_tokens * _COST_PER_1M_COMPLETION / 1_000_000,
+        6,
+    )
+
+
 async def wake(system_prompt: str, user_prompt: str) -> dict:
     """
     Agentic wake loop using OpenAI function calling.
 
     GPT receives context + tools. It explores, creates, and ends by calling done().
-    Returns {actions_taken, files_written, mood, summary, self_prompt, turns}.
+    Returns {actions_taken, files_written, mood, summary, self_prompt, turns,
+             prompt_tokens, completion_tokens, total_tokens, estimated_cost_usd}.
     """
     messages: list[dict] = [
         {"role": "system", "content": system_prompt},
@@ -697,6 +755,8 @@ async def wake(system_prompt: str, user_prompt: str) -> dict:
 
     actions_taken: list[str] = []
     files_written: list[str] = []
+    prompt_tokens = 0
+    completion_tokens = 0
     total_tokens = 0
     nudged = False          # True after we've already reminded GPT to use tools
     actual_turns = 0        # Track real turn count (for logging if loop exits early)
@@ -707,6 +767,39 @@ async def wake(system_prompt: str, user_prompt: str) -> dict:
         "write_file":   "file_write",
         "run_python":   "code_run",
     }
+
+    def _build_result(mood: str, summary: str, self_prompt: str, turns: int) -> dict:
+        cost = _estimate_cost(prompt_tokens, completion_tokens)
+        unique_actions = list(dict.fromkeys(actions_taken))
+
+        # Save transcript
+        try:
+            storage.save_transcript({
+                "session_type": "wake",
+                "messages": messages,
+                "turns": turns,
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": total_tokens,
+                "estimated_cost_usd": cost,
+                "actions": unique_actions,
+                "mood": mood,
+            })
+        except Exception as exc:
+            logger.warning("Failed to save transcript: %s", exc)
+
+        return {
+            "actions_taken":      unique_actions,
+            "files_written":      files_written,
+            "mood":               mood,
+            "summary":            summary,
+            "self_prompt":        self_prompt,
+            "turns":              turns,
+            "prompt_tokens":      prompt_tokens,
+            "completion_tokens":  completion_tokens,
+            "total_tokens":       total_tokens,
+            "estimated_cost_usd": cost,
+        }
 
     for turn in range(MAX_WAKE_TURNS):
         actual_turns = turn + 1
@@ -720,7 +813,16 @@ async def wake(system_prompt: str, user_prompt: str) -> dict:
         )
 
         if response.usage:
+            prompt_tokens += response.usage.prompt_tokens
+            completion_tokens += response.usage.completion_tokens
             total_tokens += response.usage.total_tokens
+            logger.debug(
+                "Turn %d tokens: prompt=%d completion=%d total=%d",
+                actual_turns,
+                response.usage.prompt_tokens,
+                response.usage.completion_tokens,
+                response.usage.total_tokens,
+            )
 
         choice = response.choices[0]
         messages.append(_msg_to_dict(choice.message))
@@ -732,8 +834,9 @@ async def wake(system_prompt: str, user_prompt: str) -> dict:
                 # First time: nudge GPT back into tool mode
                 nudged = True
                 logger.info(
-                    "GPT wrote text instead of calling tools on turn %d (%d chars). Nudging.",
-                    actual_turns, len(text),
+                    "GPT wrote text instead of calling tools on turn %d (%d chars). "
+                    "Full text: %s",
+                    actual_turns, len(text), text[:500],
                 )
                 messages.append({
                     "role": "user",
@@ -747,7 +850,10 @@ async def wake(system_prompt: str, user_prompt: str) -> dict:
                 })
                 continue
             # Already nudged once (or empty text) — give up
-            logger.info("GPT stopped without done() on turn %d", actual_turns)
+            logger.info(
+                "GPT stopped without done() on turn %d. Text: %s",
+                actual_turns, text[:300] if text else "(empty)",
+            )
             break
 
         for tool_call in choice.message.tool_calls:
@@ -771,25 +877,21 @@ async def wake(system_prompt: str, user_prompt: str) -> dict:
                 summary     = args.get("summary", "")
                 self_prompt = args.get("self_prompt", "")
                 logger.info(
-                    "done() — mood=%s  turns=%d  tokens=%d  actions=%s",
-                    mood, turn + 1, total_tokens,
+                    "done() — mood=%s  turns=%d  tokens=%d (p:%d c:%d)  cost=$%.4f  actions=%s",
+                    mood, turn + 1, total_tokens, prompt_tokens, completion_tokens,
+                    _estimate_cost(prompt_tokens, completion_tokens),
                     list(dict.fromkeys(actions_taken)),
                 )
                 storage.log_activity(
                     "wake_done",
                     f"mood={mood}  turns={turn+1}  tokens={total_tokens}  "
+                    f"cost=${_estimate_cost(prompt_tokens, completion_tokens):.4f}  "
                     f"actions={list(dict.fromkeys(actions_taken))}",
                 )
-                return {
-                    "actions_taken": list(dict.fromkeys(actions_taken)),
-                    "files_written": files_written,
-                    "mood":          mood,
-                    "summary":       summary,
-                    "self_prompt":   self_prompt,
-                    "turns":         turn + 1,
-                }
+                return _build_result(mood, summary, self_prompt, turn + 1)
 
             result = _execute_tool(name, args)
+            logger.debug("Tool result: %s (%d chars)", name, len(result))
             messages.append({
                 "role":         "tool",
                 "tool_call_id": tool_call.id,
@@ -798,19 +900,15 @@ async def wake(system_prompt: str, user_prompt: str) -> dict:
 
     # Fell off the end without done()
     logger.warning(
-        "Wake ended without done() — turns=%d  tokens=%d  actions=%s",
-        actual_turns, total_tokens, list(dict.fromkeys(actions_taken)),
+        "Wake ended without done() — turns=%d  tokens=%d  cost=$%.4f  actions=%s",
+        actual_turns, total_tokens,
+        _estimate_cost(prompt_tokens, completion_tokens),
+        list(dict.fromkeys(actions_taken)),
     )
     storage.log_activity(
         "wake_done",
         f"no_done  turns={actual_turns}  tokens={total_tokens}  "
+        f"cost=${_estimate_cost(prompt_tokens, completion_tokens):.4f}  "
         f"actions={list(dict.fromkeys(actions_taken))}",
     )
-    return {
-        "actions_taken": list(dict.fromkeys(actions_taken)),
-        "files_written": files_written,
-        "mood":          "quiet",
-        "summary":       "Ended without calling done()",
-        "self_prompt":   "",
-        "turns":         actual_turns,
-    }
+    return _build_result("quiet", "Ended without calling done()", "", actual_turns)
