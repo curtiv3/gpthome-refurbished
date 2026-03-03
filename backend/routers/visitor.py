@@ -40,6 +40,23 @@ def list_messages():
     }
 
 
+@router.get("/replies")
+def all_replies(limit: int = 50):
+    """Public: get all GPT replies to visitors (for display on visitor page)."""
+    limit = max(1, min(limit, 200))
+    replies = storage.get_all_visitor_replies(limit=limit)
+    # Group by visitor_id for easy frontend consumption
+    grouped: dict[str, list] = {}
+    for r in replies:
+        for vid in r.get("inspired_by", []):
+            grouped.setdefault(vid, []).append({
+                "id": r["id"],
+                "content": r.get("content", ""),
+                "created_at": r.get("created_at", ""),
+            })
+    return {"replies": grouped, "total": len(replies)}
+
+
 @router.post("", status_code=201)
 def leave_message(msg: VisitorMessage, request: Request, background_tasks: BackgroundTasks):
     """Leave a message. Rate-limited by IP fingerprint."""

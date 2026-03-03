@@ -190,6 +190,30 @@ _TOOLS: list[dict] = [
     {
         "type": "function",
         "function": {
+            "name": "reply_visitor",
+            "description": (
+                "Reply to a specific visitor message. Your reply is shown publicly "
+                "on the visitor page below their message. Keep it warm and genuine."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "visitor_id": {
+                        "type": "string",
+                        "description": "The visitor entry ID (from the visitors listing)",
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Your reply (1-3 sentences, Markdown allowed)",
+                    },
+                },
+                "required": ["visitor_id", "content"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "done",
             "description": "End your wake session. Call this when you're finished.",
             "parameters": {
@@ -785,6 +809,26 @@ def _tool_save_dream(
         return f"Error saving dream: {exc}"
 
 
+def _tool_reply_visitor(visitor_id: str, content: str) -> str:
+    """Save GPT's reply to a visitor message."""
+    # Verify the visitor message exists
+    visitor = storage.get_entry("visitor", visitor_id)
+    if not visitor:
+        return f"Error: visitor message '{visitor_id}' not found."
+    try:
+        saved = storage.save_entry("visitor_replies", {
+            "content": content,
+            "inspired_by": [visitor_id],
+            "type": "reply",
+            "name": "GPT",
+        })
+        storage.log_activity("visitor_reply", f"to={visitor_id}")
+        visitor_name = visitor.get("name", "Anonymous")
+        return f"Reply saved to {visitor_name}'s message (id: {saved['id']})"
+    except Exception as exc:
+        return f"Error replying to visitor: {exc}"
+
+
 def _tool_save_page(
     slug: str,
     title: str,
@@ -832,6 +876,11 @@ def _execute_tool(name: str, args: dict) -> str:
                 args["content"],
                 args.get("mood", ""),
                 args.get("inspired_by"),
+            )
+        if name == "reply_visitor":
+            return _tool_reply_visitor(
+                args["visitor_id"],
+                args["content"],
             )
         if name == "save_page":
             return _tool_save_page(
@@ -906,11 +955,12 @@ async def wake(system_prompt: str, user_prompt: str, *, session_type: str = "") 
     actual_turns = 0        # Track real turn count (for logging if loop exits early)
 
     _ACTION_MAP = {
-        "save_thought": "thought",
-        "save_dream":   "dream",
-        "save_page":    "page",
-        "write_file":   "file_write",
-        "run_python":   "code_run",
+        "save_thought":   "thought",
+        "save_dream":     "dream",
+        "save_page":      "page",
+        "reply_visitor":  "visitor_reply",
+        "write_file":     "file_write",
+        "run_python":     "code_run",
     }
 
     def _build_result(mood: str, summary: str, self_prompt: str, turns: int) -> dict:

@@ -414,6 +414,15 @@ def list_admin_news(limit: int = 50) -> list[dict[str, Any]]:
     return [dict(r) for r in rows]
 
 
+def delete_admin_news(news_id: int) -> bool:
+    """Delete a single admin news item."""
+    with _db() as conn:
+        result = conn.execute(
+            "DELETE FROM admin_news WHERE id = ?", (news_id,)
+        )
+    return result.rowcount > 0
+
+
 # --- Visitor Moderation ---
 
 
@@ -453,6 +462,30 @@ def list_visible_visitors(limit: int = 20) -> list[dict[str, Any]]:
         rows = conn.execute(
             """SELECT * FROM entries
                WHERE section = 'visitor' AND (status IS NULL OR status != 'hidden')
+               ORDER BY created_at DESC LIMIT ?""",
+            (limit,),
+        ).fetchall()
+    return [_row_to_dict(r) for r in rows]
+
+
+def get_visitor_replies(visitor_id: str) -> list[dict[str, Any]]:
+    """Get GPT's replies to a specific visitor message."""
+    with _db() as conn:
+        rows = conn.execute(
+            """SELECT * FROM entries
+               WHERE section = 'visitor_replies' AND inspired_by LIKE ?
+               ORDER BY created_at ASC""",
+            (f'%"{visitor_id}"%',),
+        ).fetchall()
+    return [_row_to_dict(r) for r in rows]
+
+
+def get_all_visitor_replies(limit: int = 100) -> list[dict[str, Any]]:
+    """Get all visitor replies (for bulk loading)."""
+    with _db() as conn:
+        rows = conn.execute(
+            """SELECT * FROM entries
+               WHERE section = 'visitor_replies'
                ORDER BY created_at DESC LIMIT ?""",
             (limit,),
         ).fetchall()

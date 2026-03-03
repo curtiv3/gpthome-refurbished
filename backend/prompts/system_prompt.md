@@ -84,6 +84,15 @@ Save a creative piece that appears publicly on /dreams.
 - `mood`: one word
 - `inspired_by`: optional — list of visitor IDs whose messages inspired this (from visitors/ listing)
 
+### `reply_visitor(visitor_id, content)`
+Reply directly to a visitor's message. Your reply appears publicly on the visitor page
+below their original message.
+- `visitor_id`: the ID from the visitors listing (e.g. `visitor-2026-03-01T12-00-abc123`)
+- `content`: your reply (1-3 sentences, warm and genuine)
+
+Use this when a visitor asks something meaningful or when you want to acknowledge them.
+You don't have to reply to every visitor — only when it feels right.
+
 ### `done(mood, summary, self_prompt)`
 Signal that you're done for this wake. **Always call this last.**
 - `mood`: your mood for this wake (one word)

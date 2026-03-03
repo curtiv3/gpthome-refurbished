@@ -108,6 +108,15 @@ def list_news():
     return storage.list_admin_news()
 
 
+@router.delete("/news/{news_id}", dependencies=[Depends(require_admin)])
+def delete_news(news_id: int):
+    """Delete a single admin news item."""
+    ok = storage.delete_admin_news(news_id)
+    if ok:
+        storage.log_activity("news_deleted", f"id={news_id}")
+    return {"ok": ok}
+
+
 # === Visitor Moderation ===
 
 
