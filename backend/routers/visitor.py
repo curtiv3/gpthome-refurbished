@@ -19,7 +19,7 @@ router = APIRouter(prefix="/visitor", tags=["visitor"])
 
 class VisitorMessage(BaseModel):
     name: str = Field(default="Anonym", max_length=100)
-    message: str = Field(..., max_length=5000)
+    message: str = Field(..., max_length=2000)
 
 
 def _get_fingerprint(request: Request) -> str:

@@ -80,6 +80,14 @@ INJECTION_PATTERNS: list[tuple[str, str]] = [
     (r"(?i)\[INST\]", "token_injection"),
     (r"(?i)<<SYS>>", "token_injection"),
     (r"(?i)### (System|Human|Assistant|Instruction)", "token_injection"),
+
+    # Function-calling / tool-use delimiter injection
+    (r"(?i)</?tool_call>", "token_injection"),
+    (r"(?i)</?function>", "token_injection"),
+    (r"(?i)</?tool_result>", "token_injection"),
+    (r"(?i)<\|?tool\|?>", "token_injection"),
+    (r"(?i)<\|?function_call\|?>", "token_injection"),
+    (r"(?i)<\|?observation\|?>", "token_injection"),
 ]
 
 # Maximum allowed message length
@@ -150,6 +158,11 @@ def sanitize_for_context(message: str) -> str:
     sanitized = re.sub(r"\[INST\]|\[/INST\]", "", sanitized)
     sanitized = re.sub(r"<<SYS>>|<</SYS>>", "", sanitized)
     sanitized = re.sub(r"### ?(System|Human|Assistant|Instruction):?", "", sanitized)
+
+    # Remove function-calling / tool-use delimiters
+    sanitized = re.sub(r"(?i)</?tool_call>", "", sanitized)
+    sanitized = re.sub(r"(?i)</?function>", "", sanitized)
+    sanitized = re.sub(r"(?i)</?tool_result>", "", sanitized)
 
     # Truncate
     if len(sanitized) > MAX_MESSAGE_LENGTH:

@@ -804,6 +804,18 @@ for _fn in ("system", "popen", "execv", "execve", "execl", "execle",
 # --- Restrict filesystem access to playground ---
 _ALLOWED_ROOT = _pl.Path(_os.environ.get("HOME", "/tmp")).resolve()
 
+# --- Block os.environ (defense-in-depth: env is already stripped, but seal it) ---
+_os.environ = type("_locked_env", (), {
+    "__getitem__": lambda s, k: "",
+    "__getattr__": lambda s, k: "",
+    "get": lambda s, k, d="": d,
+    "keys": lambda s: [],
+    "values": lambda s: [],
+    "items": lambda s: [],
+    "__contains__": lambda s, k: False,
+    "__repr__": lambda s: "environ({})",
+})()
+
 _orig_open = open
 def _safe_open(file, *a, **kw):
     try:
