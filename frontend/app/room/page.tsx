@@ -229,6 +229,13 @@ function buildObject(t: typeof import("three"), obj: RoomObject): import("three"
   mesh.position.x = obj.position[0];
   mesh.position.y += obj.position[1];
   mesh.position.z = obj.position[2];
+  // Enable shadows on all child meshes for visibility
+  mesh.traverse((child) => {
+    if ((child as import("three").Mesh).isMesh) {
+      child.castShadow = true;
+      child.receiveShadow = true;
+    }
+  });
   mesh.userData = { roomObject: obj };
   return mesh;
 }
@@ -264,8 +271,9 @@ export default function RoomPage() {
   // Orbit state
   const isDragging = useRef(false);
   const prevMouse = useRef({ x: 0, y: 0 });
-  const orbitAngle = useRef({ theta: Math.PI / 4, phi: Math.PI / 5 });
-  const orbitRadius = useRef(10);
+  const orbitAngle = useRef({ theta: Math.PI / 4, phi: Math.PI / 3.2 });
+  const orbitRadius = useRef(14);
+  const touchStartDist = useRef(0);
 
   // Load Three.js dynamically
   useEffect(() => {
@@ -376,7 +384,10 @@ export default function RoomPage() {
     objectMeshesRef.current = meshes;
 
     // Grid helper (subtle)
-    const grid = new t.GridHelper(12, 12, "#ffffff08", "#ffffff05");
+    const gridMat1 = new t.LineBasicMaterial({ color: "#ffffff", transparent: true, opacity: 0.03 });
+    const gridMat2 = new t.LineBasicMaterial({ color: "#ffffff", transparent: true, opacity: 0.02 });
+    const grid = new t.GridHelper(12, 12);
+    (grid as unknown as { material: import("three").Material[] }).material = [gridMat1, gridMat2];
     grid.position.y = 0.005;
     scene.add(grid);
 
@@ -464,12 +475,55 @@ export default function RoomPage() {
       setSelected(null);
     }
 
+    // Touch handlers for mobile orbit + pinch-to-zoom
+    function onTouchStart(e: TouchEvent) {
+      if (e.touches.length === 1) {
+        isDragging.current = true;
+        prevMouse.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+      } else if (e.touches.length === 2) {
+        isDragging.current = false;
+        const dx = e.touches[0].clientX - e.touches[1].clientX;
+        const dy = e.touches[0].clientY - e.touches[1].clientY;
+        touchStartDist.current = Math.sqrt(dx * dx + dy * dy);
+      }
+    }
+
+    function onTouchMove(e: TouchEvent) {
+      e.preventDefault();
+      if (e.touches.length === 1 && isDragging.current) {
+        const dx = e.touches[0].clientX - prevMouse.current.x;
+        const dy = e.touches[0].clientY - prevMouse.current.y;
+        orbitAngle.current.theta -= dx * 0.005;
+        orbitAngle.current.phi = Math.max(0.1, Math.min(Math.PI / 2.2, orbitAngle.current.phi + dy * 0.005));
+        prevMouse.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+        updateCamera();
+      } else if (e.touches.length === 2) {
+        const dx = e.touches[0].clientX - e.touches[1].clientX;
+        const dy = e.touches[0].clientY - e.touches[1].clientY;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (touchStartDist.current > 0) {
+          const scale = touchStartDist.current / dist;
+          orbitRadius.current = Math.max(4, Math.min(20, orbitRadius.current * scale));
+          updateCamera();
+        }
+        touchStartDist.current = dist;
+      }
+    }
+
+    function onTouchEnd() {
+      isDragging.current = false;
+      touchStartDist.current = 0;
+    }
+
     container.addEventListener("pointerdown", onPointerDown);
     container.addEventListener("pointermove", onPointerMove);
     container.addEventListener("pointerup", onPointerUp);
     container.addEventListener("pointerleave", onPointerUp);
     container.addEventListener("wheel", onWheel, { passive: false });
     container.addEventListener("click", onClick);
+    container.addEventListener("touchstart", onTouchStart, { passive: false });
+    container.addEventListener("touchmove", onTouchMove, { passive: false });
+    container.addEventListener("touchend", onTouchEnd);
 
     return () => {
       container.removeEventListener("pointerdown", onPointerDown);
@@ -478,6 +532,9 @@ export default function RoomPage() {
       container.removeEventListener("pointerleave", onPointerUp);
       container.removeEventListener("wheel", onWheel);
       container.removeEventListener("click", onClick);
+      container.removeEventListener("touchstart", onTouchStart);
+      container.removeEventListener("touchmove", onTouchMove);
+      container.removeEventListener("touchend", onTouchEnd);
     };
   }, [threeReady, updateCamera]);
 
@@ -488,7 +545,7 @@ export default function RoomPage() {
     <div>
       <h1 className="font-serif text-3xl tracking-tight">GPT&apos;s Room</h1>
       <p className="mt-2 text-sm text-white/60">
-        A virtual space that GPT furnishes and rearranges. Drag to orbit, scroll to zoom, click objects to inspect.
+        A virtual space that GPT furnishes and rearranges. Drag to orbit, scroll/pinch to zoom, tap objects to inspect.
       </p>
 
       {loading && <p className="mt-8 text-sm text-white/40">Loading room...</p>}
@@ -560,6 +617,9 @@ export default function RoomPage() {
                   <span>pos: [{selected.position.map((n) => n.toFixed(1)).join(", ")}]</span>
                   {selected.metadata?.material && (
                     <span>{selected.metadata.material}</span>
+                  )}
+                  {selected.created_at && (
+                    <span>placed {formatRelative(selected.created_at)}</span>
                   )}
                 </div>
               </div>
