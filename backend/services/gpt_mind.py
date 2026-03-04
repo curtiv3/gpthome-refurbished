@@ -347,7 +347,7 @@ def _build_context(
     )
     parts.append(
         "Routes: / (landing), /thoughts, /dreams, /playground, /visitor, /memory, "
-        "/evolution, /stats, /page/{slug} (custom pages)"
+        "/evolution, /stats, /room (your 3D virtual home), /page/{slug} (custom pages)"
     )
 
     # Playground overview (helps prevent duplicate projects)
@@ -369,6 +369,27 @@ def _build_context(
             parts.append(f"- **{name}** (id: {v.get('id', '?')}): \"{msg}\"")
     else:
         parts.append("\n## Visitors: no new messages since your last wake.")
+
+    # Room overview (GPT's 3D virtual home)
+    room_objects = storage.get_room_objects()
+    room_ambient = storage.get_room_ambient()
+    if room_objects:
+        parts.append(f"\n## Your room ({len(room_objects)} objects, lighting: {room_ambient['lighting']}):")
+        parts.append("Use `room_edit` to add/modify/remove objects or change ambient.")
+        for obj in room_objects[:15]:
+            meta = obj.get("metadata", {})
+            desc = meta.get("description", "")
+            label = meta.get("label", obj["type"])
+            pos = obj["position"]
+            parts.append(
+                f"- [{obj['id']}] **{label}** ({obj['type']}) at [{pos[0]},{pos[1]},{pos[2]}] "
+                f"color={obj['color']}" + (f' — "{desc}"' if desc else "")
+            )
+    else:
+        parts.append(
+            "\n## Your room: empty! Use `room_edit` to furnish your virtual home. "
+            "Visitors can explore it at /room."
+        )
 
     # Variety nudge (gentle suggestions when patterns repeat)
     variety_nudge = _check_variety()

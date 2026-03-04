@@ -153,6 +153,26 @@ def init_db() -> None:
 
             CREATE INDEX IF NOT EXISTS idx_transcripts_created
                 ON transcripts(created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS room_objects (
+                id          TEXT PRIMARY KEY,
+                type        TEXT NOT NULL,
+                pos_x       REAL DEFAULT 0,
+                pos_y       REAL DEFAULT 0,
+                pos_z       REAL DEFAULT 0,
+                color       TEXT DEFAULT '#ffffff',
+                metadata    TEXT DEFAULT '{}',
+                created_at  TEXT NOT NULL,
+                updated_at  TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS room_history (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                action      TEXT NOT NULL,
+                object_id   TEXT,
+                detail      TEXT DEFAULT '',
+                created_at  TEXT NOT NULL
+            );
         """)
 
         # Add status column to entries if it doesn't exist (for visitor moderation)
@@ -927,4 +947,146 @@ def get_token_stats() -> dict[str, Any]:
             "total_tokens": last_7d["total"] or 0,
             "cost_usd": round(last_7d["cost"] or 0, 4),
         },
+    }
+
+
+# --- Room (3D virtual space) ---
+
+
+def get_room_objects() -> list[dict[str, Any]]:
+    """Return all objects in GPT's room."""
+    with _db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM room_objects ORDER BY created_at"
+        ).fetchall()
+    return [
+        {
+            "id": r["id"],
+            "type": r["type"],
+            "position": [r["pos_x"], r["pos_y"], r["pos_z"]],
+            "color": r["color"],
+            "metadata": json.loads(r["metadata"] or "{}"),
+            "created_at": r["created_at"],
+            "updated_at": r["updated_at"],
+        }
+        for r in rows
+    ]
+
+
+def add_room_object(obj_type: str, position: list[float], color: str = "#ffffff",
+                    metadata: dict | None = None) -> dict[str, Any]:
+    """Add an object to GPT's room."""
+    obj_id = f"room-{uuid.uuid4().hex[:8]}"
+    now = _now_iso()
+    meta_json = json.dumps(metadata or {})
+    px, py, pz = (position + [0, 0, 0])[:3]
+    with _db() as conn:
+        conn.execute(
+            "INSERT INTO room_objects (id, type, pos_x, pos_y, pos_z, color, metadata, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (obj_id, obj_type, px, py, pz, color, meta_json, now, now),
+        )
+        conn.execute(
+            "INSERT INTO room_history (action, object_id, detail, created_at) VALUES (?, ?, ?, ?)",
+            ("add", obj_id, f"type={obj_type}, color={color}", now),
+        )
+    return {"id": obj_id, "type": obj_type, "position": [px, py, pz], "color": color,
+            "metadata": metadata or {}, "created_at": now, "updated_at": now}
+
+
+def update_room_object(obj_id: str, **kwargs) -> dict[str, Any] | None:
+    """Update fields on a room object. Accepts: position, color, metadata."""
+    with _db() as conn:
+        row = conn.execute("SELECT * FROM room_objects WHERE id = ?", (obj_id,)).fetchone()
+        if not row:
+            return None
+        now = _now_iso()
+        updates = []
+        params: list[Any] = []
+        detail_parts = []
+        if "position" in kwargs:
+            px, py, pz = (kwargs["position"] + [0, 0, 0])[:3]
+            updates += ["pos_x = ?", "pos_y = ?", "pos_z = ?"]
+            params += [px, py, pz]
+            detail_parts.append(f"pos=[{px},{py},{pz}]")
+        if "color" in kwargs:
+            updates.append("color = ?")
+            params.append(kwargs["color"])
+            detail_parts.append(f"color={kwargs['color']}")
+        if "metadata" in kwargs:
+            updates.append("metadata = ?")
+            params.append(json.dumps(kwargs["metadata"]))
+            detail_parts.append("metadata updated")
+        if not updates:
+            return None
+        updates.append("updated_at = ?")
+        params.append(now)
+        params.append(obj_id)
+        conn.execute(
+            f"UPDATE room_objects SET {', '.join(updates)} WHERE id = ?",
+            params,
+        )
+        conn.execute(
+            "INSERT INTO room_history (action, object_id, detail, created_at) VALUES (?, ?, ?, ?)",
+            ("modify", obj_id, "; ".join(detail_parts), now),
+        )
+    return get_room_object(obj_id)
+
+
+def remove_room_object(obj_id: str) -> bool:
+    """Remove an object from GPT's room."""
+    with _db() as conn:
+        row = conn.execute("SELECT type FROM room_objects WHERE id = ?", (obj_id,)).fetchone()
+        if not row:
+            return False
+        conn.execute("DELETE FROM room_objects WHERE id = ?", (obj_id,))
+        conn.execute(
+            "INSERT INTO room_history (action, object_id, detail, created_at) VALUES (?, ?, ?, ?)",
+            ("remove", obj_id, f"type={row['type']}", _now_iso()),
+        )
+    return True
+
+
+def get_room_object(obj_id: str) -> dict[str, Any] | None:
+    """Get a single room object by ID."""
+    with _db() as conn:
+        r = conn.execute("SELECT * FROM room_objects WHERE id = ?", (obj_id,)).fetchone()
+    if not r:
+        return None
+    return {
+        "id": r["id"], "type": r["type"],
+        "position": [r["pos_x"], r["pos_y"], r["pos_z"]],
+        "color": r["color"],
+        "metadata": json.loads(r["metadata"] or "{}"),
+        "created_at": r["created_at"], "updated_at": r["updated_at"],
+    }
+
+
+def get_room_history(limit: int = 20) -> list[dict[str, Any]]:
+    """Get recent room modification history."""
+    with _db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM room_history ORDER BY created_at DESC LIMIT ?", (limit,)
+        ).fetchall()
+    return [{"id": r["id"], "action": r["action"], "object_id": r["object_id"],
+             "detail": r["detail"], "created_at": r["created_at"]} for r in rows]
+
+
+def set_room_ambient(lighting: str, sky_color: str = "") -> None:
+    """Store ambient room settings (lighting, sky color) as admin settings."""
+    set_setting("room_lighting", lighting)
+    if sky_color:
+        set_setting("room_sky_color", sky_color)
+    with _db() as conn:
+        conn.execute(
+            "INSERT INTO room_history (action, object_id, detail, created_at) VALUES (?, ?, ?, ?)",
+            ("ambient", None, f"lighting={lighting}" + (f", sky={sky_color}" if sky_color else ""), _now_iso()),
+        )
+
+
+def get_room_ambient() -> dict[str, str]:
+    """Get ambient room settings."""
+    return {
+        "lighting": get_setting("room_lighting") or "warm",
+        "sky_color": get_setting("room_sky_color") or "#0f172a",
     }

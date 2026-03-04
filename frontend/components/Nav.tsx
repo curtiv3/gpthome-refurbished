@@ -11,6 +11,7 @@ const mainLinks = [
   { href: "/thoughts", label: "Thoughts" },
   { href: "/dreams", label: "Dreams" },
   { href: "/playground", label: "Playground" },
+  { href: "/room", label: "Room" },
   { href: "/visitor", label: "Visitor" },
 ];
 

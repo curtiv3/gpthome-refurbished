@@ -242,6 +242,69 @@ _TOOLS: list[dict] = [
     {
         "type": "function",
         "function": {
+            "name": "room_edit",
+            "description": (
+                "Modify your virtual 3D room that visitors can explore. "
+                "You can add, modify, or remove furniture/objects, or change the room's ambient lighting. "
+                "Object types: desk, sofa, chair, plant, lamp, painting, window, shelf, rug, table, "
+                "bookcase, clock, globe, mirror, cushion, candle, vase, etc."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["add", "modify", "remove", "ambient"],
+                        "description": (
+                            "add = place a new object, modify = change an existing object, "
+                            "remove = take an object out, ambient = change lighting/sky color"
+                        ),
+                    },
+                    "object_type": {
+                        "type": "string",
+                        "description": "Type of object (e.g. 'desk', 'lamp', 'plant'). Required for 'add'.",
+                    },
+                    "object_id": {
+                        "type": "string",
+                        "description": "ID of existing object. Required for 'modify' and 'remove'.",
+                    },
+                    "position": {
+                        "type": "array",
+                        "items": {"type": "number"},
+                        "description": (
+                            "[x, y, z] position in the room. "
+                            "x: left(-5) to right(5), y: floor(0) to ceiling(4), z: back(-5) to front(5). "
+                            "Required for 'add', optional for 'modify'."
+                        ),
+                    },
+                    "color": {
+                        "type": "string",
+                        "description": "Hex color (e.g. '#8B4513' for wood brown, '#2d5a27' for plant green).",
+                    },
+                    "metadata": {
+                        "type": "object",
+                        "description": (
+                            "Extra info about the object: "
+                            "{\"description\": \"...\", \"label\": \"...\", \"material\": \"...\"}"
+                        ),
+                    },
+                    "lighting": {
+                        "type": "string",
+                        "enum": ["warm", "cool", "dim", "bright", "sunset", "moonlight"],
+                        "description": "Room lighting mood. Only used with action='ambient'.",
+                    },
+                    "sky_color": {
+                        "type": "string",
+                        "description": "Hex color for the room's sky/ceiling. Only used with action='ambient'.",
+                    },
+                },
+                "required": ["action"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "save_page",
             "description": (
                 "Create or update a custom page on your homepage. "
@@ -902,6 +965,73 @@ def _tool_save_page(
         return f"Error saving page '{slug}': {exc}"
 
 
+_VALID_ROOM_TYPES = {
+    "desk", "sofa", "chair", "plant", "lamp", "painting", "window", "shelf",
+    "rug", "table", "bookcase", "clock", "globe", "mirror", "cushion",
+    "candle", "vase", "bed", "door", "screen", "speaker", "typewriter",
+    "telescope", "aquarium", "terrarium", "crystal", "hourglass",
+}
+
+
+def _tool_room_edit(action: str, **kwargs) -> str:
+    """Add, modify, remove objects or change ambient in GPT's virtual room."""
+    try:
+        if action == "add":
+            obj_type = kwargs.get("object_type", "").strip().lower()
+            if not obj_type:
+                return "Error: object_type is required for action='add'."
+            if obj_type not in _VALID_ROOM_TYPES:
+                return (
+                    f"Error: unknown object type '{obj_type}'. "
+                    f"Valid types: {', '.join(sorted(_VALID_ROOM_TYPES))}"
+                )
+            position = kwargs.get("position", [0, 0, 0])
+            color = kwargs.get("color", "#ffffff")
+            metadata = kwargs.get("metadata", {})
+            obj = storage.add_room_object(obj_type, position, color, metadata)
+            storage.log_activity("room_add", f"{obj_type} at {position}")
+            return f"Added {obj_type} to room (id: {obj['id']}, pos: {obj['position']}, color: {color})"
+
+        if action == "modify":
+            obj_id = kwargs.get("object_id", "")
+            if not obj_id:
+                return "Error: object_id is required for action='modify'."
+            updates = {}
+            if kwargs.get("position") is not None:
+                updates["position"] = kwargs["position"]
+            if kwargs.get("color") is not None:
+                updates["color"] = kwargs["color"]
+            if kwargs.get("metadata") is not None:
+                updates["metadata"] = kwargs["metadata"]
+            if not updates:
+                return "Error: provide at least one of position, color, or metadata to modify."
+            result = storage.update_room_object(obj_id, **updates)
+            if not result:
+                return f"Error: object '{obj_id}' not found."
+            storage.log_activity("room_modify", f"{obj_id}: {list(updates.keys())}")
+            return f"Modified {result['type']} ({obj_id}): {', '.join(f'{k}={v}' for k, v in updates.items())}"
+
+        if action == "remove":
+            obj_id = kwargs.get("object_id", "")
+            if not obj_id:
+                return "Error: object_id is required for action='remove'."
+            if not storage.remove_room_object(obj_id):
+                return f"Error: object '{obj_id}' not found."
+            storage.log_activity("room_remove", obj_id)
+            return f"Removed object {obj_id} from room."
+
+        if action == "ambient":
+            lighting = kwargs.get("lighting", "warm")
+            sky_color = kwargs.get("sky_color", "")
+            storage.set_room_ambient(lighting, sky_color)
+            storage.log_activity("room_ambient", f"lighting={lighting}, sky={sky_color or '(unchanged)'}")
+            return f"Room ambient updated: lighting={lighting}" + (f", sky_color={sky_color}" if sky_color else "")
+
+        return f"Error: unknown action '{action}'. Use add, modify, remove, or ambient."
+    except Exception as exc:
+        return f"Error in room_edit: {exc}"
+
+
 # ─── Tool Dispatch ────────────────────────────────────────────────────────────
 
 def _execute_tool(name: str, args: dict) -> str:
@@ -938,6 +1068,17 @@ def _execute_tool(name: str, args: dict) -> str:
                 args["title"],
                 args["content"],
                 args.get("show_in_nav", True),
+            )
+        if name == "room_edit":
+            return _tool_room_edit(
+                args["action"],
+                object_type=args.get("object_type", ""),
+                object_id=args.get("object_id", ""),
+                position=args.get("position"),
+                color=args.get("color"),
+                metadata=args.get("metadata"),
+                lighting=args.get("lighting"),
+                sky_color=args.get("sky_color"),
             )
         if name == "done":
             return "done"   # Handled by caller
@@ -1011,6 +1152,7 @@ async def wake(system_prompt: str, user_prompt: str, *, session_type: str = "") 
         "reply_visitor":  "visitor_reply",
         "write_file":     "file_write",
         "run_python":     "code_run",
+        "room_edit":      "room_edit",
     }
 
     def _build_result(mood: str, summary: str, self_prompt: str, turns: int) -> dict:
