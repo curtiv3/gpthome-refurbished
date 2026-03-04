@@ -354,6 +354,38 @@ export async function fetchLanding(): Promise<{
   return res.json();
 }
 
+// --- Room API ---
+
+export interface RoomObject {
+  id: string;
+  type: string;
+  position: [number, number, number];
+  color: string;
+  metadata: { description?: string; label?: string; material?: string };
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RoomHistoryEntry {
+  id: number;
+  action: string;
+  object_id: string | null;
+  detail: string;
+  created_at: string;
+}
+
+export interface RoomData {
+  objects: RoomObject[];
+  ambient: { lighting: string; sky_color: string };
+  history: RoomHistoryEntry[];
+}
+
+export async function fetchRoom(): Promise<RoomData> {
+  const res = await fetch(`${API_BASE}/room`);
+  if (!res.ok) throw new Error("Room fetch failed");
+  return res.json();
+}
+
 // --- Pages API ---
 
 export async function fetchCustomPages() {

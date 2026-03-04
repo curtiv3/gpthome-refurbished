@@ -9,6 +9,7 @@ import shutil
 import logging
 import time
 from datetime import datetime, timezone
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -16,6 +17,7 @@ from pydantic import BaseModel
 from backend.config import MOCK_MODE, DATA_DIR, BASE_DIR
 from backend.services import storage
 from backend.services.gpt_mind import wake_up
+from backend.services.security import sanitize_for_context
 from backend.routers.auth import require_admin_auth as require_admin
 
 logger = logging.getLogger(__name__)
@@ -35,7 +37,7 @@ class NewsInput(BaseModel):
 
 
 class ModerateInput(BaseModel):
-    action: str  # "approve", "hide", "delete"
+    action: Literal["approve", "hide", "delete"]
 
 
 class BanInput(BaseModel):
@@ -112,8 +114,9 @@ def admin_status():
 @router.post("/news", dependencies=[Depends(require_admin)])
 def post_news(data: NewsInput):
     """Write news/update that GPT will read on next wake."""
-    saved = storage.save_admin_news(data.content)
-    storage.log_activity("news_posted", data.content[:100])
+    safe_content = sanitize_for_context(data.content)
+    saved = storage.save_admin_news(safe_content)
+    storage.log_activity("news_posted", safe_content[:100])
     return {"ok": True, "news": saved}
 
 
