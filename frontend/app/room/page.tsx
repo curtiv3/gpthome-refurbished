@@ -227,7 +227,7 @@ function buildObject(t: typeof import("three"), obj: RoomObject): import("three"
     mesh.position.y = 0.25;
   }
   mesh.position.x = obj.position[0];
-  mesh.position.y += obj.position[1];
+  mesh.position.y += Math.max(0, obj.position[1]);
   mesh.position.z = obj.position[2];
   // Enable shadows on all child meshes for visibility
   mesh.traverse((child) => {
@@ -270,6 +270,7 @@ export default function RoomPage() {
 
   // Orbit state
   const isDragging = useRef(false);
+  const dragDistance = useRef(0);
   const prevMouse = useRef({ x: 0, y: 0 });
   const orbitAngle = useRef({ theta: Math.PI / 4, phi: Math.PI / 3.2 });
   const orbitRadius = useRef(14);
@@ -424,21 +425,30 @@ export default function RoomPage() {
     if (!container) return;
 
     function onPointerDown(e: PointerEvent) {
+      e.preventDefault(); // prevent native drag on canvas
       isDragging.current = true;
+      dragDistance.current = 0;
       prevMouse.current = { x: e.clientX, y: e.clientY };
+      (e.target as HTMLElement)?.setPointerCapture?.(e.pointerId);
     }
 
     function onPointerMove(e: PointerEvent) {
       if (!isDragging.current) return;
       const dx = e.clientX - prevMouse.current.x;
       const dy = e.clientY - prevMouse.current.y;
+      dragDistance.current += Math.abs(dx) + Math.abs(dy);
       orbitAngle.current.theta -= dx * 0.005;
       orbitAngle.current.phi = Math.max(0.1, Math.min(Math.PI / 2.2, orbitAngle.current.phi + dy * 0.005));
       prevMouse.current = { x: e.clientX, y: e.clientY };
       updateCamera();
     }
 
-    function onPointerUp() {
+    function onPointerUp(e: PointerEvent) {
+      isDragging.current = false;
+      (e.target as HTMLElement)?.releasePointerCapture?.(e.pointerId);
+    }
+
+    function onPointerLeave() {
       isDragging.current = false;
     }
 
@@ -449,6 +459,8 @@ export default function RoomPage() {
     }
 
     function onClick(e: MouseEvent) {
+      // Ignore clicks that were actually drags
+      if (dragDistance.current > 5) return;
       if (!THREE || !raycasterRef.current || !mouseRef.current || !cameraRef.current || !container) return;
       const rect = container.getBoundingClientRect();
       mouseRef.current.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
@@ -518,7 +530,7 @@ export default function RoomPage() {
     container.addEventListener("pointerdown", onPointerDown);
     container.addEventListener("pointermove", onPointerMove);
     container.addEventListener("pointerup", onPointerUp);
-    container.addEventListener("pointerleave", onPointerUp);
+    container.addEventListener("pointerleave", onPointerLeave);
     container.addEventListener("wheel", onWheel, { passive: false });
     container.addEventListener("click", onClick);
     container.addEventListener("touchstart", onTouchStart, { passive: false });
@@ -529,7 +541,7 @@ export default function RoomPage() {
       container.removeEventListener("pointerdown", onPointerDown);
       container.removeEventListener("pointermove", onPointerMove);
       container.removeEventListener("pointerup", onPointerUp);
-      container.removeEventListener("pointerleave", onPointerUp);
+      container.removeEventListener("pointerleave", onPointerLeave);
       container.removeEventListener("wheel", onWheel);
       container.removeEventListener("click", onClick);
       container.removeEventListener("touchstart", onTouchStart);
@@ -562,7 +574,8 @@ export default function RoomPage() {
           <div className="relative mt-6 overflow-hidden rounded-2xl border border-white/10 bg-black/40">
             <div
               ref={containerRef}
-              className="h-[420px] w-full cursor-grab active:cursor-grabbing sm:h-[520px]"
+              style={{ touchAction: "none" }}
+              className="h-[420px] w-full cursor-grab select-none active:cursor-grabbing sm:h-[520px]"
             />
 
             {/* Object count badge */}
