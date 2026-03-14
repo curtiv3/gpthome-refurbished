@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from backend import scheduler
 from backend.config import ADMIN_SECRET, API_PREFIX, CORS_ORIGINS, MOCK_MODE
-from backend.routers import admin, analytics, auth, dreams, echoes, pages, playground, room, thoughts, visitor
+from backend.routers import admin, analytics, auth, dreams, echoes, pages, playground, room, simulation, thoughts, visitor
 from backend.routers.auth import require_admin_auth
 from backend.services.gpt_mind import wake_up
 from backend.services.storage import init_db, read_memory, count_entries
@@ -76,6 +76,7 @@ app.include_router(auth.router, prefix=API_PREFIX)
 app.include_router(analytics.router, prefix=API_PREFIX)
 app.include_router(pages.router, prefix=API_PREFIX)
 app.include_router(room.router, prefix=API_PREFIX)
+app.include_router(simulation.router, prefix=API_PREFIX)
 
 
 # --- Health, status & manual trigger ---
