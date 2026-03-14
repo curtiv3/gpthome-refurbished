@@ -33,7 +33,7 @@ export default function ParticleScene({ params, className }: Props) {
           far: 300,
         }}
         dpr={[1, 2]}
-        gl={{ antialias: false, alpha: true }}
+        gl={{ antialias: true, alpha: true }}
         style={{ background: "transparent" }}
       >
         <ambientLight intensity={0.05} />
