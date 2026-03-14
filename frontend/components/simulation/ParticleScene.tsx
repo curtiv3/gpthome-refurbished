@@ -32,7 +32,7 @@ export default function ParticleScene({ params, className }: Props) {
           near: 0.1,
           far: 300,
         }}
-        dpr={[1, 1.5]}
+        dpr={[1, 2]}
         gl={{ antialias: false, alpha: true }}
         style={{ background: "transparent" }}
       >
