@@ -1,9 +1,10 @@
 "use client";
 
-import { useRef } from "react";
+import { useRef, useCallback } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import type { Group } from "three";
+import type { RootState } from "@react-three/fiber";
 import ParticleField from "./ParticleField";
 import type { VisualParams } from "./types";
 
@@ -23,6 +24,13 @@ interface Props {
 }
 
 export default function ParticleScene({ params, className }: Props) {
+  // Force correct pixel ratio after R3F creates the renderer
+  const handleCreated = useCallback((state: RootState) => {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    state.gl.setPixelRatio(dpr);
+    state.gl.setSize(state.size.width, state.size.height);
+  }, []);
+
   return (
     <div className={className}>
       <Canvas
@@ -35,6 +43,7 @@ export default function ParticleScene({ params, className }: Props) {
         dpr={[1, 2]}
         gl={{ antialias: true, alpha: true }}
         style={{ background: "transparent" }}
+        onCreated={handleCreated}
       >
         <ambientLight intensity={0.05} />
         <ParticleField params={params} />
